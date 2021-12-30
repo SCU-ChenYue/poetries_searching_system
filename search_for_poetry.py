@@ -166,7 +166,6 @@ def search_multiSentence_analyze(contents, translations, analyze_list):
         else:
             trans = translations[i]
         corpus = []
-
         for paragraph in analyze_list:  # 遍历赏析的每一个文段
             seg, hidden = ltp.seg([paragraph])
             seg = seg[0]
@@ -178,9 +177,9 @@ def search_multiSentence_analyze(contents, translations, analyze_list):
             corpus.append(wlist)
         bm25Model = bm25.BM25(corpus)
 
-        aidf = sum(map(lambda m: float(bm25Model.idf[k]), bm25Model.idf.keys())) / len(bm25Model.idf.keys())
+        aidf = sum(map(lambda m: float(bm25Model.idf[m]), bm25Model.idf.keys())) / len(bm25Model.idf.keys())
         poetry_query = ltp.seg([sentence + trans])
-        scores = bm25Model.get_scores(poetry_query, aidf)  # 搜索得到该句话对应每个文段的分数
+        scores = bm25Model.get_scores(poetry_query[0], aidf)  # 搜索得到该句话对应每个文段的分数
         paragraphs_score = []
 
         for j in range(len(scores)):
@@ -201,10 +200,10 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
     # 对赏析进行分段，并再分成短句后进行清洗。
     analyzes = analyze.split("|")
     analyze_list, _ = wash_analyze(analyzes)
-    if "\n" in analyzes:
-        analyzes.remove("\n")
-    if "" in analyzes:
-        analyzes.remove("")
+    if "\n" in analyze_list:
+        analyze_list.remove("\n")
+    if "" in analyze_list:
+        analyze_list.remove("")
     contents, translations = content.split("|"), translation.split("|")
     if "" in contents:
         contents.remove("")
@@ -256,27 +255,31 @@ def expanding_query_withDeleting(q_list, k):
         if len(wordnets) >= 1:
             for i in range(len(wordnets)):
                 wordnets[i] = wordnets[i].replace("+", "")
-                if len(q_expansion) >= k + 2:  # 最多为k+2个
+                if len(q_expansion) >= k + 1:  # 最多为k+1个，因为wordnet中的补充不删除
                     break
                 if wordnets[i] in tagList and wordnets[i] not in query_list and wordnets[i] not in q_expansion:
                     q_expansion.append(wordnets[i])
-            if len(q_expansion) == 2:  # 只扩充了一个则不删除
+            if len(q_expansion) == k + 1:
                 query_list.extend(q_expansion)
-                if k == 1:  # 若已经够了
-                    print(q, "的最终扩充结果为：", q_expansion)
-                    continue
-            elif len(q_expansion) >= 3:
-                different_token = model.doesnt_match(q_expansion)
-                if different_token != q:
-                    print("删除：", different_token)
-                    q_expansion.remove(different_token)
-                else:
-                    print("删除：", q_expansion[-1])
-                    q_expansion.remove(q_expansion[-1])
-                if len(q_expansion) == k + 1:  # 若已经够了
-                    query_list.extend(q_expansion)
-                    print(q, "的最终扩充结果为：", q_expansion)
-                    continue
+                print(q, "的最终扩充结果为：", q_expansion)
+                continue
+            # if len(q_expansion) == 2:  # 只扩充了一个则不删除
+            #     query_list.extend(q_expansion)
+            #     if k == 1:  # 若已经够了
+            #         print(q, "的最终扩充结果为：", q_expansion)
+            #         continue
+            # elif len(q_expansion) >= 3:
+            #     different_token = model.doesnt_match(q_expansion)
+            #     if different_token != q:
+            #         print("删除：", different_token)
+            #         q_expansion.remove(different_token)
+            #     else:
+            #         print("删除：", q_expansion[-1])
+            #         q_expansion.remove(q_expansion[-1])
+            #     if len(q_expansion) == k + 1:  # 若已经够了
+            #         query_list.extend(q_expansion)
+            #         print(q, "的最终扩充结果为：", q_expansion)
+            #         continue
         else:
             print("wordnet未获取到内容！")
         print("开始synonyms扩充。")
