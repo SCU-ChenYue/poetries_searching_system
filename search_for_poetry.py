@@ -12,7 +12,7 @@ from ltp import LTP
 import jieba.analyse
 import functools
 import synonyms
-from util.utils import normalization, compare_right, compare_left, cut_sent
+from util.utils import normalization, compare_right, compare_left, cut_sent, wash_list, wash_analyze
 
 # 可接受词性 jieba
 # flags = ['a', 'j', 'n', 'vn', 'ns', 't', 'v', 's', 'ad', 'ag', 'an', 'ng', 'tg', 'vg', 'vd', 's', 'i', 'l']
@@ -73,20 +73,6 @@ def tfidf_normalization(qTFIDF):  # 对query的tifdf结果进行归一化
     return tfidf_state
 
 
-def wash_analyze(clist):
-    analyze_list = []
-    newcontent = ""
-    for c in clist:  # 每一个段落
-        paragraph = ""
-        senList = cut_sent(c)
-        for sen in senList:
-            if "《" not in sen and "》" not in sen:
-                paragraph += sen
-                newcontent += sen
-        analyze_list.append(paragraph)
-    return analyze_list, newcontent    # 由每个段落组成的list [...,...]
-
-
 def cut_query(context, q, k=5):  # 原输入句子和去停用词后的词语列表
     token_score = {}
     for item in q:
@@ -139,25 +125,11 @@ def cut_query(context, q, k=5):  # 原输入句子和去停用词后的词语列
     return sorted_tokens
 
 
-def get_result(qs, aidf):
-    scores = BM25Model.get_scores(qs, aidf)  # 输入的文本内容必须是由关键词组成的列表
-    paragraph_score = []
-    for i in range(len(scores)):    # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
-        paragraph_score.append((scores[i], poetryList[i][1], poetryList[i][2], poetryList[i][3], poetryList[i][4],
-                                poetryList[i][5], poetryList[i][6], poetryList[i][7], poetryList[i][8]))
-    paragraph_score.sort(key=functools.cmp_to_key(compare_left))
-    for item in paragraph_score[:25]:
-        if item[0] == 0:
-            break
-        print("全诗信息：")
-        print(item[0], " ", item[1], " ", item[2], " ", item[3], " ", item[4])
-        print("目标句子提取结果：")
-        sentence_result = sentence_fromPoetry(item, qs)
-        print(sentence_result)
-    return paragraph_score
+def calculate_BM25_matchingScores(contents, translations, analyze_list):
+    paragraphScore_Dict = {}    # {赏析的段落：[[分数、原文、译文], [分数、原文、译文]...]}
+    for analyze in analyze_list:
+        paragraphScore_Dict[analyze] = []
 
-
-def search_multiSentence_analyze(contents, translations, analyze_list):
     sentence_analyze = []
     for i in range(len(contents)):  # 若原文和译文对齐，则依次遍历每一句话。
         sentence = contents[i]
@@ -165,6 +137,7 @@ def search_multiSentence_analyze(contents, translations, analyze_list):
             trans = ""
         else:
             trans = translations[i]
+        print("用原文：", sentence, " 和译文：", trans, " 进行搜索。")
         corpus = []
         for paragraph in analyze_list:  # 遍历赏析的每一个文段
             seg, hidden = ltp.seg([paragraph])
@@ -178,19 +151,28 @@ def search_multiSentence_analyze(contents, translations, analyze_list):
         bm25Model = bm25.BM25(corpus)
 
         aidf = sum(map(lambda m: float(bm25Model.idf[m]), bm25Model.idf.keys())) / len(bm25Model.idf.keys())
-        poetry_query = ltp.seg([sentence + trans])
+        poetry_query, hidden = ltp.seg([sentence])  # 没有用trans
         scores = bm25Model.get_scores(poetry_query[0], aidf)  # 搜索得到该句话对应每个文段的分数
         paragraphs_score = []
-
         for j in range(len(scores)):
             paragraphs_score.append((scores[j], analyze_list[j]))
-        paragraphs_score.sort(key=functools.cmp_to_key(compare_left))
-        if paragraphs_score[0][0] <= paragraphs_score[1][0] * 3:  # 如果第一、二段的分数在三倍以内，则两段都要
-            paragraph = paragraphs_score[0][1] + paragraphs_score[1][1]
-        else:
+        paragraphs_score.sort(key=functools.cmp_to_key(compare_left))  # score分数的高低也要考虑，因为多个句子可以匹配到同样的赏析，但是匹配程度不同
+        print(paragraphs_score)
+        for item in paragraphs_score:
+            paragraphScore_Dict[item[1]].append([item[0], sentence, trans])
+        if len(paragraphs_score) <= 1:
             paragraph = paragraphs_score[0][1]
+        else:
+            if paragraphs_score[0][0] <= paragraphs_score[1][0] * 3:  # 如果第一、二段的分数在三倍以内，则两段都要，
+                paragraph = paragraphs_score[0][1] + paragraphs_score[1][1]
+            else:
+                paragraph = paragraphs_score[0][1]
         sentence_analyze.append([sentence, trans, paragraph])
-    return sentence_analyze
+
+    for key, value in paragraphScore_Dict.items():
+        value.sort(key=functools.cmp_to_key(compare_left))
+        paragraphScore_Dict[key] = value
+    return sentence_analyze, paragraphScore_Dict
 
 
 def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、译文，从赏析中检索对应的文段。
@@ -200,44 +182,65 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
     # 对赏析进行分段，并再分成短句后进行清洗。
     analyzes = analyze.split("|")
     analyze_list, _ = wash_analyze(analyzes)
-    if "\n" in analyze_list:
-        analyze_list.remove("\n")
-    if "" in analyze_list:
-        analyze_list.remove("")
     contents, translations = content.split("|"), translation.split("|")
-    if "" in contents:
-        contents.remove("")
-    if "" in translations:
-        translations.remove("")
-
+    analyzelist, contents, translations = wash_list(analyze_list), wash_list(contents), wash_list(translations)
     if len(contents) == 1:  # 如果默认分句的结果只有一句
         poetry_contents = content.split("。")    # 尝试手动分句
         trans_contents = translation.split("。")
+        poetry_contents, trans_contents = wash_list(poetry_contents), wash_list(trans_contents)
         if len(poetry_contents) == 1 or len(poetry_contents) != len(trans_contents):  # 若分完还是一句或没法对齐。
             return [content, translation, analyze]
         else:   # 若手动分完后是对齐的了...
-            sentenceAnalyzes = search_multiSentence_analyze(poetry_contents, trans_contents, analyze_list)
+            sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(poetry_contents, trans_contents, analyzelist)
     elif len(contents) == len(translations):    # 本来就对齐
-        sentenceAnalyzes = search_multiSentence_analyze(contents, translations, analyze_list)
+        sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(contents, translations, analyzelist)
     else:   # 若不对齐
         poetry_contents = content.split("。")    # 先尝试手动分句
         trans_contents = translation.split("。")
+        poetry_contents, trans_contents = wash_list(poetry_contents), wash_list(trans_contents)
         if len(poetry_contents) == 1:    # 若手动分句后只有一句
             return [content, translation, analyze]
         elif len(poetry_contents) != len(trans_contents):   # 若手动分句后有多句，但是不对齐，则只用原文去搜
-            sentenceAnalyzes = search_multiSentence_analyze(poetry_contents, [], analyze_list)
-
+            sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(poetry_contents, [], analyzelist)
+        else:   # 分句后对齐了
+            sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(poetry_contents, trans_contents, analyzelist)
+    for key, value in scoreDict.items():
+        print(key)
+        print(value)
+    # scoreDict：{赏析的段落：[[分数、原文、译文], [分数、原文、译文]...]}
     maxCount = 0
-    maxItem = []
-    for item in sentenceAnalyzes:
+    maxSentence = []
+    for key, value in scoreDict.items():  # 找出最大和第二大的
         count = 0
         for q in qs:
-            if q in item[1] or q in item[2]:
+            if q in key:
                 count += 1
+                # print(q)
         if count > maxCount:
             maxCount = count
-            maxItem = item
-    return maxItem  # 函数返回的是包含了最多检索词的赏析所在的诗句
+            maxSentence = [(value[0][0], value[0][1], value[0][2])]
+            if len(value) >= 2 and value[0][0] <= value[1][0] + 0.5:
+                maxSentence.append((value[1][0], value[1][1], value[1][2]))
+    return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
+
+
+def get_result(qs, aidf):
+    scores = BM25Model.get_scores(qs, aidf)  # 输入的文本内容必须是由关键词组成的列表
+    paragraph_score = []
+    for i in range(len(scores)):    # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
+        paragraph_score.append((scores[i], poetryList[i][1], poetryList[i][2], poetryList[i][3], poetryList[i][4],
+                                poetryList[i][5], poetryList[i][6], poetryList[i][7], poetryList[i][8]))
+    paragraph_score.sort(key=functools.cmp_to_key(compare_left))
+    for item in paragraph_score[:25]:
+        if item[0] == 0:
+            break
+        # print("全诗信息：")
+        # print(item[0], " ", item[1], " ", item[2], " ", item[3], " ", item[4])
+        print("目标句子提取结果：")
+        sentence_result = sentence_fromPoetry(item, qs)
+        for item in sentence_result:
+            print(item)
+    return paragraph_score
 
 
 def expanding_query_withDeleting(q_list, k):

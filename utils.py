@@ -142,3 +142,35 @@ def standardization(data):
     mu = np.mean(data, axis=0)
     sigma = np.std(data, axis=0)
     return (data - mu) / sigma
+
+
+def wash_list(qlist):
+    other_character = ["\n", "|", " ", "\u3000", "", "，", "。", "！", "？", "!", "?", ".", ",", '']
+    query_list = []
+    for item in qlist:
+        if item not in other_character:
+            if "|" in item:
+                item = item.replace("|", "")
+            query_list.append(item)
+    return query_list
+
+
+def wash_analyze(clist):
+    analyze_list = []
+    newcontent = ""
+    for c in clist:  # 每一个段落
+        paragraph = ""
+        senList = cut_sent(c)
+        for sen in senList:
+            if "《" not in sen and "》" not in sen:
+                paragraph += sen
+                newcontent += sen
+        analyze_list.append(paragraph)
+    return analyze_list, newcontent    # 由每个段落组成的list [...,...
+
+
+# test = ['“沧浪有钓叟，吾与尔同归”句，用形象表达观点，透露出韬光养晦才是真正的处世态度，愿意追随渔夫的思想和行迹，隐居江湖，不露才华。', '', '“处世忌太洁，至人贵藏晖”句，直接表达观点，明喻人生在世的处事方式，就应当如渔父那般不问是非、明哲保身的消极出世态度。', '']
+# test = wash_list(test)
+# print(test)
+# for item in test:
+#     print(item)
