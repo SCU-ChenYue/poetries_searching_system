@@ -18,7 +18,7 @@ from util.utils import normalization, compare_right, compare_left, cut_sent, was
 # flags = ['a', 'j', 'n', 'vn', 'ns', 't', 'v', 's', 'ad', 'ag', 'an', 'ng', 'tg', 'vg', 'vd', 's', 'i', 'l']
 # 停止词性 LTP
 flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x']
-corpus_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+关键词LTP）.csv"  # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
+corpus_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"  # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
 embedding_path = "wordEmbedding/sgns.baidubaike.bigram-char"
 tfidfPath = "checkpoint/checkpoint_9/poetry_tfidf.model"
 dicpath = "checkpoint/checkpoint_9/poetry_dic.dict"
@@ -137,7 +137,7 @@ def calculate_BM25_matchingScores(contents, translations, analyze_list):
             trans = ""
         else:
             trans = translations[i]
-        print("用原文：", sentence, " 和译文：", trans, " 进行搜索。")
+        # print("用原文：", sentence, " 和译文：", trans, " 进行搜索。")
         corpus = []
         for paragraph in analyze_list:  # 遍历赏析的每一个文段
             seg, hidden = ltp.seg([paragraph])
@@ -157,7 +157,7 @@ def calculate_BM25_matchingScores(contents, translations, analyze_list):
         for j in range(len(scores)):
             paragraphs_score.append((scores[j], analyze_list[j]))
         paragraphs_score.sort(key=functools.cmp_to_key(compare_left))  # score分数的高低也要考虑，因为多个句子可以匹配到同样的赏析，但是匹配程度不同
-        print(paragraphs_score)
+        # print(paragraphs_score)
         for item in paragraphs_score:
             paragraphScore_Dict[item[1]].append([item[0], sentence, trans])
         if len(paragraphs_score) <= 1:
@@ -204,9 +204,9 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
             sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(poetry_contents, [], analyzelist)
         else:   # 分句后对齐了
             sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(poetry_contents, trans_contents, analyzelist)
-    for key, value in scoreDict.items():
-        print(key)
-        print(value)
+    # for key, value in scoreDict.items():
+    #     print(key)
+    #     print(value)
     # scoreDict：{赏析的段落：[[分数、原文、译文], [分数、原文、译文]...]}
     maxCount = 0
     maxSentence = []
@@ -224,26 +224,61 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
     return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
 
 
-def get_result(qs, aidf):
+def get_result(qs, aidf, old_query, query_set_list, mode=0):    # mode为0则不需要将包含了old_query的排在前面
     scores = BM25Model.get_scores(qs, aidf)  # 输入的文本内容必须是由关键词组成的列表
     paragraph_score = []
     for i in range(len(scores)):    # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
         paragraph_score.append((scores[i], poetryList[i][1], poetryList[i][2], poetryList[i][3], poetryList[i][4],
                                 poetryList[i][5], poetryList[i][6], poetryList[i][7], poetryList[i][8]))
     paragraph_score.sort(key=functools.cmp_to_key(compare_left))
-    for item in paragraph_score[:25]:
-        if item[0] == 0:
-            break
+    paragraph_score = [item for item in paragraph_score[:25] if item[0] > 0]
+    print("获取到：", len(paragraph_score), "条结果。")
+    paragraph_score_new = []
+    if mode == 1:   # 将包含了old_query的排在前面
+        for item in paragraph_score:
+            for q in old_query:
+                if q in item[4] or q in item[5] or q in item[7]:
+                    paragraph_score_new.append(item)
+                    break
+        for item in paragraph_score:
+            flag = 0
+            for q in old_query:
+                if q in item[4] or q in item[5] or q in item[7]:
+                    flag = 1
+                    break
+            if flag == 0:
+                paragraph_score_new.append(item)
+    elif mode == 0:
+        paragraph_score_new = paragraph_score
+    elif mode == 2:     # query_set_list: {q1:[q1,...], q2:[q2,...], q3:[q3,...]}
+        keys = query_set_list.keys()
+        for item in paragraph_score:
+            flag = 1    # 为1则全部都在，为0则有的不在。
+            for key in keys:
+                q_set_list = query_set_list[key]
+                for qs in q_set_list
+
+
+
+    for item in paragraph_score_new:
         # print("全诗信息：")
         # print(item[0], " ", item[1], " ", item[2], " ", item[3], " ", item[4])
-        print("目标句子提取结果：")
+        # print("目标句子提取结果：")
+        print("诗歌：", item[1], " 作者：", item[2])
         sentence_result = sentence_fromPoetry(item, qs)
         for item in sentence_result:
             print(item)
-    return paragraph_score
+    return paragraph_score_new
 
 
-def expanding_query_withDeleting(q_list, k):
+def expand_query_setList(q, qExpansion, qset_Dict):  # q， qExpansion是根据q扩充的
+    for qe in qExpansion:
+        if qe != q and qe not in qset_Dict[q]:
+            qset_Dict[q].append(qe)
+    return qset_Dict
+
+
+def expanding_query_withDeleting(q_list, qset_dict, k):    # 依此使用wordNet,synonyms,word2vec进行近义词扩充
     print("进行扩充，每个词扩充", k, "个。")
     query_list = q_list.copy()
     for q in q_list:
@@ -265,6 +300,7 @@ def expanding_query_withDeleting(q_list, k):
             if len(q_expansion) == k + 1:
                 query_list.extend(q_expansion)
                 print(q, "的最终扩充结果为：", q_expansion)
+                qset_dict = expand_query_setList(q, q_expansion, qset_dict)
                 continue
             # if len(q_expansion) == 2:  # 只扩充了一个则不删除
             #     query_list.extend(q_expansion)
@@ -300,6 +336,7 @@ def expanding_query_withDeleting(q_list, k):
                 query_list.extend(q_expansion)
                 if k == 1:
                     print(q, "的最终扩充结果为：", q_expansion)
+                    qset_dict = expand_query_setList(q, q_expansion, qset_dict)
                     continue
             elif len(q_expansion) >= 3:
                 different_token = model.doesnt_match(q_expansion)
@@ -312,6 +349,7 @@ def expanding_query_withDeleting(q_list, k):
                 if len(q_expansion) == k + 1:  # 若已经够了
                     query_list.extend(q_expansion)
                     print(q, "的最终扩充结果为：", q_expansion)
+                    qset_dict = expand_query_setList(q, q_expansion, qset_dict)
                     continue
         else:
             print("synonyms未获取到内容！")
@@ -319,6 +357,7 @@ def expanding_query_withDeleting(q_list, k):
         if q not in words_list:
             print("word2vec未获取到内容！")
             print(q, "的最终扩充结果为：", q_expansion)
+            qset_dict = expand_query_setList(q, q_expansion, qset_dict)
             continue
         result_list = model.most_similar(q, topn=100)
         for item in result_list:
@@ -344,11 +383,12 @@ def expanding_query_withDeleting(q_list, k):
                     q_expansion.remove(q_expansion[-1])
                 query_list.extend(q_expansion)
         print(q, "的最终扩充结果为：", q_expansion)
+        qset_dict = expand_query_setList(q, q_expansion, qset_dict)
     query_list = list(set(query_list))
-    return query_list
+    return query_list, qset_dict
 
 
-def replace_synonyms(qlist):    # 遍历分词后的word列表，并将不在数据集的词表中的词语换成数据集中的近义词
+def replace_synonyms(qlist, qSet_dict):    # 遍历分词后的word列表，并将不在数据集的词表中的词语换成数据集中的近义词
     queryList = []
     for token in qlist:
         if token not in tagList:
@@ -361,16 +401,17 @@ def replace_synonyms(qlist):    # 遍历分词后的word列表，并将不在数
             result_list = model.most_similar(token, topn=100)
             print("获取完成。")
             for item in result_list:
-                if count == 3:
+                if count == 3 or (count == 2 and item[1] < 0.5):    # 多拓展1或2个
                     break
                 if item[0] in tagList:
                     print("替换结果：", item[0])
                     queryList.append(item[0])
+                    qSet_dict[token].append(item[0])
                     count += 1
                     # break
         else:
             queryList.append(token)
-    return queryList
+    return queryList, qSet_dict
 
 
 def process_query(context):
@@ -378,41 +419,44 @@ def process_query(context):
     seg = seg[0]
     pos = ltp.pos(hidden)[0]
     qs = []
-    for i in range(len(seg)):
+    for i in range(len(seg)):   # 对输入的query进行分词，并去除停用词
         word = seg[i].strip()
         flag = pos[i].strip()
         if word not in stopwords and flag not in flags:
             qs.append(word)
-    # query = psg.cut(context)
+    # query = psg.cut(context)  # jieba分词取消
     # qs = []
     # for word, flag in query:
     #     if word not in stopwords and flag in flags:
     #         qs.append(word)
     qs = list(set(qs))
-    print("去掉停用词和停用词性后的结果：", qs)
-    qs = replace_synonyms(qs)   # 替换不在词表中的词
+    query_set_dict = {}     # {q1:[q1,...], q2:[q2,...], q3:[q3,...]}
+    for q in qs:
+        query_set_dict[q] = [q]
+    print("根据停用词和停用词性筛选后的结果：", qs)
+    qs, query_set_dict = replace_synonyms(qs, query_set_dict)   # 替换不在词表中的词
     print("进行近义词替换后的结果：", qs)
+    old_qs = qs.copy()  # 进行扩充之前的query
     if len(qs) <= 2:    # 若此时词语很少
         # 进行词语扩充
-        qs = expanding_query_withDeleting(qs, k=3)
-
+        qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, k=2)
     # if len(qs) > 5:
     #     qs = cut_query(context, qs, k=5)
 
     print("初步检索的结果：")
-    paragraph_score = get_result(qs, average_idf)
+    paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=1)
 
     # 自动扩充搜索范围
     if len(paragraph_score) == 0 or paragraph_score[0][0] <= 8:  # 若没有获取到结果，或者分数都不高
         if len(qs) > 5:  # 如果关键词太多，则需要取重要的
             # qs = cut_query(context, qs, k=5)
-            qs = expanding_query_withDeleting(qs, 3)
+            qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 3)
         elif len(qs) == 1:
-            qs = expanding_query_withDeleting(qs, 6)
+            qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 6)
         else:
-            qs = expanding_query_withDeleting(qs, 4)
+            qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 4)
         print("扩充后再次检索：")
-        new_paragraph_score = get_result(qs, average_idf)
+        new_paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=1)
 
 
 if __name__ == '__main__':
