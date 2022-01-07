@@ -251,14 +251,20 @@ def get_result(qs, aidf, old_query, query_set_list, mode=0):    # mode为0则不
     elif mode == 0:
         paragraph_score_new = paragraph_score
     elif mode == 2:     # query_set_list: {q1:[q1,...], q2:[q2,...], q3:[q3,...]}
+        paragraph_score_count = []
         keys = query_set_list.keys()
         for item in paragraph_score:
-            flag = 1    # 为1则全部都在，为0则有的不在。
+            count = 0    # 为1则全部都在，为0则有的不在。
             for key in keys:
                 q_set_list = query_set_list[key]
-                for qs in q_set_list
-
-
+                for qs in q_set_list:
+                    if qs in item[4] or qs in item[5] or qs in item[7]:
+                        count += 1
+                        break
+            paragraph_score_count.append([count, item])
+        paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
+        for item in paragraph_score_count:
+            paragraph_score_new.append(item[1])
 
     for item in paragraph_score_new:
         # print("全诗信息：")
@@ -444,7 +450,7 @@ def process_query(context):
     #     qs = cut_query(context, qs, k=5)
 
     print("初步检索的结果：")
-    paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=1)
+    paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=2)
 
     # 自动扩充搜索范围
     if len(paragraph_score) == 0 or paragraph_score[0][0] <= 8:  # 若没有获取到结果，或者分数都不高
@@ -456,7 +462,7 @@ def process_query(context):
         else:
             qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 4)
         print("扩充后再次检索：")
-        new_paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=1)
+        new_paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=2)
 
 
 if __name__ == '__main__':
