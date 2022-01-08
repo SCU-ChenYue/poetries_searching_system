@@ -17,7 +17,7 @@ from util.utils import normalization, compare_right, compare_left, cut_sent, was
 # 可接受词性 jieba
 # flags = ['a', 'j', 'n', 'vn', 'ns', 't', 'v', 's', 'ad', 'ag', 'an', 'ng', 'tg', 'vg', 'vd', 's', 'i', 'l']
 # 停止词性 LTP
-flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x']
+flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x', 'd']
 corpus_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"  # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
 embedding_path = "wordEmbedding/sgns.baidubaike.bigram-char"
 tfidfPath = "checkpoint/checkpoint_9/poetry_tfidf.model"
@@ -178,10 +178,10 @@ def calculate_BM25_matchingScores(contents, translations, analyze_list):
 def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、译文，从赏析中检索对应的文段。
     content, translation, analyze = poetry_item[4], poetry_item[5], poetry_item[7]
     content, translation, analyze = content.replace(" ", ""), translation.replace(" ", ""), analyze.replace(" ", "")
-    sentenceAnalyzes = []   # [[sentence, trans, paragraph],...]
     # 对赏析进行分段，并再分成短句后进行清洗。
     analyzes = analyze.split("|")
-    analyze_list, _ = wash_analyze(analyzes)
+    # analyze_list, _ = wash_analyze(analyzes)
+    analyze_list = analyzes
     contents, translations = content.split("|"), translation.split("|")
     analyzelist, contents, translations = wash_list(analyze_list), wash_list(contents), wash_list(translations)
     if len(contents) == 1:  # 如果默认分句的结果只有一句
@@ -212,8 +212,8 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
     maxSentence = []
     for key, value in scoreDict.items():  # 找出最大和第二大的
         count = 0
-        for q in qs:
-            if q in key:
+        for qm in qs:
+            if qm in key:
                 count += 1
                 # print(q)
         if count > maxCount:
@@ -221,7 +221,18 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
             maxSentence = [(value[0][0], value[0][1], value[0][2])]
             if len(value) >= 2 and value[0][0] <= value[1][0] + 0.5:
                 maxSentence.append((value[1][0], value[1][1], value[1][2]))
-    return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
+    if maxCount > 0:
+        return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
+    else:
+        # print(maxCount)
+        # # [[sentence, trans, paragraph],...]
+        # for item in sentenceAnalyzes:
+        #     for qt in qs:
+        #         print(qt)
+        #         if qt in item[0] or qt in item[1] or item[2]:
+        #             maxSentence.append((item[0], item[1], item[2]))
+        #             break
+        return maxSentence
 
 
 def get_result(qs, aidf, old_query, query_set_list, mode=0):    # mode为0则不需要将包含了old_query的排在前面
@@ -236,29 +247,29 @@ def get_result(qs, aidf, old_query, query_set_list, mode=0):    # mode为0则不
     paragraph_score_new = []
     if mode == 1:   # 将包含了old_query的排在前面
         for item in paragraph_score:
-            for q in old_query:
-                if q in item[4] or q in item[5] or q in item[7]:
+            for q1 in old_query:
+                if q1 in item[4] or q1 in item[5] or q1 in item[7]:
                     paragraph_score_new.append(item)
                     break
         for item in paragraph_score:
             flag = 0
-            for q in old_query:
-                if q in item[4] or q in item[5] or q in item[7]:
+            for q2 in old_query:
+                if q2 in item[4] or q2 in item[5] or q2 in item[7]:
                     flag = 1
                     break
             if flag == 0:
                 paragraph_score_new.append(item)
     elif mode == 0:
         paragraph_score_new = paragraph_score
-    elif mode == 2:     # query_set_list: {q1:[q1,...], q2:[q2,...], q3:[q3,...]}
+    elif mode == 2:     # query_set_list: {q1:[q1,...], q2:[q2,...], q3:[q3,...]}，根据出现在用户输入中的词的数量
         paragraph_score_count = []
         keys = query_set_list.keys()
         for item in paragraph_score:
             count = 0    # 为1则全部都在，为0则有的不在。
             for key in keys:
                 q_set_list = query_set_list[key]
-                for qs in q_set_list:
-                    if qs in item[4] or qs in item[5] or qs in item[7]:
+                for qq in q_set_list:
+                    if qq in item[4] or qq in item[5] or qq in item[7]:
                         count += 1
                         break
             paragraph_score_count.append([count, item])
@@ -399,10 +410,24 @@ def replace_synonyms(qlist, qSet_dict):    # 遍历分词后的word列表，并�
     for token in qlist:
         if token not in tagList:
             print("需要替换：", token)
+            qSet_dict.pop(token)
             count = 0
             if token not in words_list:
-                print("无法替换：", token)
-                continue
+                print("LTP分词后无法替换：", token)
+                flag = 0
+                token_jieba = psg.cut(token)
+                for word, flag in token_jieba:
+                    if word in words_list:
+                        flag = 1
+                        token = word
+                        break
+                if flag == 0:
+                    print("JIEBA分词后也不可以替换。")
+                    continue
+                else:
+                    print("JIEBA分词后可以替换成：", token)
+                    qSet_dict[token] = []
+
             print("正在通过word2vec获取100个近义词。")
             result_list = model.most_similar(token, topn=100)
             print("获取完成。")
@@ -440,8 +465,10 @@ def process_query(context):
     for q in qs:
         query_set_dict[q] = [q]
     print("根据停用词和停用词性筛选后的结果：", qs)
+    print(query_set_dict)
     qs, query_set_dict = replace_synonyms(qs, query_set_dict)   # 替换不在词表中的词
     print("进行近义词替换后的结果：", qs)
+    print(query_set_dict)
     old_qs = qs.copy()  # 进行扩充之前的query
     if len(qs) <= 2:    # 若此时词语很少
         # 进行词语扩充
@@ -457,6 +484,8 @@ def process_query(context):
         if len(qs) > 5:  # 如果关键词太多，则需要取重要的
             # qs = cut_query(context, qs, k=5)
             qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 3)
+            print("扩展后")
+            print(query_set_dict)
         elif len(qs) == 1:
             qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 6)
         else:
