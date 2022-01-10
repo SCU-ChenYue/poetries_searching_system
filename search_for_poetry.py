@@ -204,23 +204,25 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
             sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(poetry_contents, [], analyzelist)
         else:   # 分句后对齐了
             sentenceAnalyzes, scoreDict = calculate_BM25_matchingScores(poetry_contents, trans_contents, analyzelist)
-    # for key, value in scoreDict.items():
-    #     print(key)
-    #     print(value)
-    # scoreDict：{赏析的段落：[[分数、原文、译文], [分数、原文、译文]...]}
+    # scoreDict：{赏析的段落：[[分数、原文、译文], [分数、原文、译文]...]}，sentenceAnalyzes：[[sentence, trans, paragraph],...]
+    # 首先通过是否出现在原文、译文的方式找关键句。
+
+
     maxCount = 0
     maxSentence = []
-    for key, value in scoreDict.items():  # 找出最大和第二大的
+    for key, value in scoreDict.items():  # 找出最大和第二大的，都是在赏析的文段中找。
+        query_list = []
         count = 0
         for qm in qs:
             if qm in key:
                 count += 1
+                query_list.append(qm)
                 # print(q)
         if count > maxCount:
             maxCount = count
-            maxSentence = [(value[0][0], value[0][1], value[0][2])]
+            maxSentence = [(value[0][0], value[0][1], value[0][2], query_list)]
             if len(value) >= 2 and value[0][0] <= value[1][0] + 0.5:
-                maxSentence.append((value[1][0], value[1][1], value[1][2]))
+                maxSentence.append((value[1][0], value[1][1], value[1][2], query_list))
     if maxCount > 0:
         return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
     else:
@@ -245,6 +247,7 @@ def get_result(qs, aidf, old_query, query_set_list, mode=0):    # mode为0则不
     paragraph_score = [item for item in paragraph_score[:25] if item[0] > 0]
     print("获取到：", len(paragraph_score), "条结果。")
     paragraph_score_new = []
+    # 几种mode都是在对诗进行排名。
     if mode == 1:   # 将包含了old_query的排在前面
         for item in paragraph_score:
             for q1 in old_query:
@@ -270,7 +273,7 @@ def get_result(qs, aidf, old_query, query_set_list, mode=0):    # mode为0则不
                 q_set_list = query_set_list[key]
                 for qq in q_set_list:
                     if qq in item[4] or qq in item[5] or qq in item[7]:
-                        count += 1
+                        count += 1  # 统计同时是q1,q2,q3的列表中的词语
                         break
             paragraph_score_count.append([count, item])
         paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
@@ -411,34 +414,41 @@ def replace_synonyms(qlist, qSet_dict):    # 遍历分词后的word列表，并�
         if token not in tagList:
             print("需要替换：", token)
             qSet_dict.pop(token)
-            count = 0
             if token not in words_list:
                 print("LTP分词后无法替换：", token)
                 flag = 0
-                token_jieba = psg.cut(token)
-                for word, flag in token_jieba:
-                    if word in words_list:
-                        flag = 1
-                        token = word
-                        break
-                if flag == 0:
-                    print("JIEBA分词后也不可以替换。")
-                    continue
-                else:
-                    print("JIEBA分词后可以替换成：", token)
-                    qSet_dict[token] = []
+                if len(token) > 2:  # 词长大于2时才考虑重新分词。
+                    token_jieba = psg.cut(token)
+                    for word, flag in token_jieba:
+
+                        if word in words_list:
+                            flag = 1
+                            token = word
+                            break
+                    if flag == 0:
+                        print("JIEBA分词后不可以替换。")
+                    else:
+                        print("JIEBA分词后可以替换成：", token)
+                        qSet_dict[token] = [token]
+                        queryList.append(token)
+                        continue
 
             print("正在通过word2vec获取100个近义词。")
             result_list = model.most_similar(token, topn=100)
             print("获取完成。")
             for item in result_list:
-                if count == 3 or (count == 2 and item[1] < 0.5):    # 多拓展1或2个
-                    break
                 if item[0] in tagList:
                     print("替换结果：", item[0])
                     queryList.append(item[0])
-                    qSet_dict[token].append(item[0])
-                    count += 1
+                    qSet_dict[item[0]] = [item[0]]
+                    break
+                # if count == 3 or (count == 2 and item[1] < 0.5):    # 多拓展1或2个
+                #     break
+                # if item[0] in tagList:
+                #     print("替换结果：", item[0])
+                #     queryList.append(item[0])
+                #     qSet_dict[token].append(item[0])
+                #     count += 1
                     # break
         else:
             queryList.append(token)
@@ -465,20 +475,22 @@ def process_query(context):
     for q in qs:
         query_set_dict[q] = [q]
     print("根据停用词和停用词性筛选后的结果：", qs)
-    print(query_set_dict)
     qs, query_set_dict = replace_synonyms(qs, query_set_dict)   # 替换不在词表中的词
     print("进行近义词替换后的结果：", qs)
     print(query_set_dict)
     old_qs = qs.copy()  # 进行扩充之前的query
     if len(qs) <= 2:    # 若此时词语很少
         # 进行词语扩充
+        # print("扩充前：")
+        # print(qs)
+        # print(query_set_dict)
         qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, k=2)
     # if len(qs) > 5:
     #     qs = cut_query(context, qs, k=5)
 
     print("初步检索的结果：")
+    print(query_set_dict)
     paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=2)
-
     # 自动扩充搜索范围
     if len(paragraph_score) == 0 or paragraph_score[0][0] <= 8:  # 若没有获取到结果，或者分数都不高
         if len(qs) > 5:  # 如果关键词太多，则需要取重要的
