@@ -4,12 +4,13 @@ from gensim.models import TfidfModel, LdaModel
 from model_TFIDF_LDA import get_stopwords
 from nltk.corpus import wordnet as wn
 from gensim.summarization import bm25
-import jieba
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 import csv
+import torch
 from gensim.models import KeyedVectors
 import jieba.posseg as psg
 from ltp import LTP
-import jieba.analyse
 import functools
 import synonyms
 from util.utils import normalization, compare_right, compare_left, wash_list, wash_content
@@ -20,11 +21,12 @@ flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x', 'd']  # 停�
 # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
 corpus_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"
 embedding_path = "wordEmbedding/sgns.baidubaike.bigram-char"
-tfidfPath = "checkpoint/checkpoint_11/poetry_tfidf.model"
-dicpath = "checkpoint/checkpoint_11/poetry_dic.dict"
-ldapath = "checkpoint/checkpoint_11/poetry_lda.model"
+tfidfPath = "checkpoint/checkpoint_100topics_100epoch/poetry_tfidf.model"
+dicpath = "checkpoint/checkpoint_100topics_100epoch/poetry_dic.dict"
+ldapath = "checkpoint/checkpoint_100topics_100epoch/poetry_lda.model"
 allTagpath = "去重之后/分别提取的数据/tag.txt"
 stop_path = "stopwords.txt"
+sentence_model = SentenceTransformer('bert-base-nli-mean-tokens')
 stopwords = get_stopwords(stop_path)
 tfidfModel = TfidfModel.load(tfidfPath)
 ldaModel = LdaModel.load(ldapath)
@@ -201,7 +203,7 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
     # 首先通过是否出现在原文、译文的方式找关键句。
 
     maxCount = 0
-    maxSentence = []
+    maxSentence = []    # [(score, content, translation, [q1, q2, q3])]
     for key, value in scoreDict.items():  # 找出包含最多keyword的赏析对应的最高和第二高句子。
         query_list = []
         count = 0
@@ -212,17 +214,17 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
                 # print(q)
         if count > maxCount:
             maxCount = count
-            maxSentence = [(value[0][0], value[0][1], value[0][2], query_list)]
+            maxSentence = [(value[0][0], value[0][1], value[0][2], query_list, key)]
             if len(value) >= 2 and value[0][0] <= value[1][0] + 0.5 and len(value[0][1]) >= 7:
-                maxSentence.append((value[1][0], value[1][1], value[1][2], query_list))
+                maxSentence.append((value[1][0], value[1][1], value[1][2], query_list, key))
             elif len(value[0][1]) < 7:  # 太短了也自动扩充
                 if value[0][1][-1] != "。" or value[0][1][-1] != "，" or value[0][1][-1] != "！" or value[0][1][-1] != "？":
                     maxSentence = [
                         (max(value[0][0], value[1][0]), value[0][1] + "。" + value[1][1], value[0][2] + value[1][2],
-                         query_list)]
+                         query_list, key)]
                 else:
                     maxSentence = [(max(value[0][0], value[1][0]), value[0][1] + value[1][1], value[0][2] + value[1][2],
-                                    query_list)]
+                                    query_list, key)]
     if maxCount > 0:
         return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
     else:
@@ -238,7 +240,7 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
 
 
 # 对搜索到的所有诗的结果进行排名。mode=1：若结果中包含了原始的、扩充前的query，则排在前面。mode=2：若结果包含了分别被扩充的多个query，则排在前面。
-def get_result(qs, aidf, old_query, query_set_list, mode=0):  # mode为0则不需要将包含了old_query的排在前面
+def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # mode为0则不需要将包含了old_query的排在前面
     scores = BM25Model.get_scores(qs, aidf)  # 输入的文本内容必须是由关键词组成的列表
     paragraph_score = []
     for i in range(len(scores)):  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
@@ -280,19 +282,28 @@ def get_result(qs, aidf, old_query, query_set_list, mode=0):  # mode为0则不�
         paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
         for item in paragraph_score_count:
             paragraph_score_new.append(item[1])
-
+    sen_list = [query_context]
     for item in paragraph_score_new:
-        # print("全诗信息：")
-        # print(item[0], " ", item[1], " ", item[2], " ", item[3], " ", item[4])
-        # print("目标句子提取结果：")
+        sen_results = sentence_fromPoetry(item, qs)
+        for sen in sen_results:
+            sen_list.append(sen[2] + sen[4])
+    # 分成多个batch。
+    sentence_embeddings = []
+    for sen in sen_list:
+        item = list(sentence_model.encode([sen])[0])
+        sentence_embeddings.append(item)
+    sentence_embeddings = torch.tensor([i.cpu().detach().numpy() for i in sentence_embeddings]).cuda()
+    cosine_results = cosine_similarity([sentence_embeddings[0], sentence_embeddings[1:]])
+    for i in range(len(paragraph_score_new)):
+        item = paragraph_score_new[i]
         print("诗歌：", item[1], " 作者：", item[2])
         sentence_result = sentence_fromPoetry(item, qs)
         for item in sentence_result:
-            print(item)
+            print(cosine_results[i], " ", item)
     return paragraph_score_new
 
 
-def expand_query_setList(q, qExpansion, qset_Dict):  # q， qExpansion是根据q扩充的
+def expand_query_setList(q, qExpansion, qset_Dict):  # q，qExpansion是根据q扩充的
     for qe in qExpansion:
         if qe != q and qe not in qset_Dict[q]:
             qset_Dict[q].append(qe)
@@ -510,13 +521,11 @@ def process_query(context):
     old_qs = qs.copy()  # 进行扩充之前的query
     if len(qs) <= 3:  # 若此时词语很少
         qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, k=2)
-
     # if len(qs) > 3:
     #     qs = cut_query(qs, k=3)
-
     print("初步检索的结果：")
     print(query_set_dict)
-    paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=2)
+    paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, mode=2)
     # 自动扩充搜索范围
     if len(paragraph_score) == 0 or paragraph_score[0][0] <= 8:  # 若没有获取到结果，或者分数都不高
         if len(qs) > 5:  # 如果关键词太多，则需要取重要的
@@ -529,7 +538,7 @@ def process_query(context):
         else:
             qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 4)
         print("扩充后再次检索：")
-        new_paragraph_score = get_result(qs, average_idf, old_qs, query_set_dict, mode=2)
+        new_paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, mode=2)
 
 
 if __name__ == '__main__':
