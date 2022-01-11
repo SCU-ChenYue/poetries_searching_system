@@ -76,7 +76,7 @@ def tfidf_normalization(qTFIDF):  # 对query的tifdf结果进行归一化
 
 
 # item：分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
-def LDA_scores(query_list, item):   # 判断所在诗歌内容的词语，是否是其关键主题词。
+def LDA_scores(query_list, item):  # 判断所在诗歌内容的词语，是否是其关键主题词。
     inside_qList = []
     for q in query_list:
         if q in item[5] or q in item[7]:
@@ -88,7 +88,7 @@ def LDA_scores(query_list, item):   # 判断所在诗歌内容的词语，是否
     topics_doc = topics_docs[0]
 
 
-def cut_query(qlist, k=5):  # 检索词组成的词语列表。应该在所有词替换完成后使用。
+def cut_query(qlist, qSet_dict, k=5):  # 检索词组成的词语列表。应该在所有词替换完成后使用。
     # 先使用语料库中的tfidf进行打分
     corpus = [dictionary.doc2bow(qlist)]
     corpus_tfidf = list(tfidfModel[corpus])[0]
@@ -101,7 +101,11 @@ def cut_query(qlist, k=5):  # 检索词组成的词语列表。应该在所有�
     print("语料库的tf-idf打分情况：", token_state)
     token_state = token_state[:k]
     newQuery_list = [item[0] for item in token_state]
-    return newQuery_list
+    keys = qSet_dict.keys()
+    for item in token_state[k:]:
+        if item[0] in keys:
+            qSet_dict.pop(item[0])
+    return newQuery_list, qSet_dict
 
 
 def calculate_BM25_matchingScores(contents, translations, analyze_list):
@@ -209,8 +213,16 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
         if count > maxCount:
             maxCount = count
             maxSentence = [(value[0][0], value[0][1], value[0][2], query_list)]
-            if len(value) >= 2 and value[0][0] <= value[1][0] + 0.5 or len(value[0][1] <= 7):   # 太短了也自动扩充
+            if len(value) >= 2 and value[0][0] <= value[1][0] + 0.5 and len(value[0][1]) >= 7:
                 maxSentence.append((value[1][0], value[1][1], value[1][2], query_list))
+            elif len(value[0][1]) < 7:  # 太短了也自动扩充
+                if value[0][1][-1] != "。" or value[0][1][-1] != "，" or value[0][1][-1] != "！" or value[0][1][-1] != "？":
+                    maxSentence = [
+                        (max(value[0][0], value[1][0]), value[0][1] + "。" + value[1][1], value[0][2] + value[1][2],
+                         query_list)]
+                else:
+                    maxSentence = [(max(value[0][0], value[1][0]), value[0][1] + value[1][1], value[0][2] + value[1][2],
+                                    query_list)]
     if maxCount > 0:
         return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
     else:
@@ -287,6 +299,13 @@ def expand_query_setList(q, qExpansion, qset_Dict):  # q， qExpansion是根据q
     return qset_Dict
 
 
+def same_stringPart(str1, str2):  # 判断两个字符是否有相同部分
+    for i in str1:
+        if i in str2:
+            return True
+    return False
+
+
 def expanding_query_withDeleting(q_list, qset_dict, k):  # 依此使用wordNet,synonyms,word2vec进行近义词扩充
     print("进行扩充，每个词扩充", k, "个。")
     query_list = q_list.copy()
@@ -311,23 +330,6 @@ def expanding_query_withDeleting(q_list, qset_dict, k):  # 依此使用wordNet,s
                 print(q, " 的最终扩充结果为：", q_expansion)
                 qset_dict = expand_query_setList(q, q_expansion, qset_dict)
                 continue
-            # if len(q_expansion) == 2:  # 只扩充了一个则不删除
-            #     query_list.extend(q_expansion)
-            #     if k == 1:  # 若已经够了
-            #         print(q, "的最终扩充结果为：", q_expansion)
-            #         continue
-            # elif len(q_expansion) >= 3:
-            #     different_token = model.doesnt_match(q_expansion)
-            #     if different_token != q:
-            #         print("删除：", different_token)
-            #         q_expansion.remove(different_token)
-            #     else:
-            #         print("删除：", q_expansion[-1])
-            #         q_expansion.remove(q_expansion[-1])
-            #     if len(q_expansion) == k + 1:  # 若已经够了
-            #         query_list.extend(q_expansion)
-            #         print(q, "的最终扩充结果为：", q_expansion)
-            #         continue
         else:
             print("wordnet未获取到内容！")
         print("开始synonyms扩充。")
@@ -349,10 +351,21 @@ def expanding_query_withDeleting(q_list, qset_dict, k):  # 依此使用wordNet,s
                     continue
             elif len(q_expansion) >= 3:
                 different_token = model.doesnt_match(q_expansion)
-                if different_token != q:
+                if different_token != q and same_stringPart(different_token, q) is False:
                     print("删除：", different_token)
                     q_expansion.remove(different_token)
-                else:
+                elif different_token != q and same_stringPart(different_token, q) is True:
+                    flag = 0
+                    for token in reversed(q_expansion):
+                        if token != q and same_stringPart(token, q) is False:
+                            print("删除：", token)
+                            q_expansion.remove(token)
+                            flag = 1
+                            break
+                    if flag == 0:
+                        print("删除：", different_token)
+                        q_expansion.remove(different_token)
+                else:   # doesn't match的刚好为q，则直接删除最后一个。
                     print("删除：", q_expansion[-1])
                     q_expansion.remove(q_expansion[-1])
                 if len(q_expansion) == k + 1:  # 若已经够了
@@ -384,10 +397,21 @@ def expanding_query_withDeleting(q_list, qset_dict, k):  # 依此使用wordNet,s
                 query_list.extend(q_expansion)
             else:
                 different_token = model.doesnt_match(q_expansion)
-                if different_token != q:
+                if different_token != q and same_stringPart(different_token, q) is False:
                     print("删除：", different_token)
                     q_expansion.remove(different_token)
-                else:
+                elif different_token != q and same_stringPart(different_token, q) is True:
+                    flag = 0
+                    for token in reversed(q_expansion):
+                        if token != q and same_stringPart(token, q) is False:
+                            print("删除：", token)
+                            q_expansion.remove(token)
+                            flag = 1
+                            break
+                    if flag == 0:
+                        print("删除：", different_token)
+                        q_expansion.remove(different_token)
+                else:  # doesn't match的刚好为q，则直接删除最后一个。
                     print("删除：", q_expansion[-1])
                     q_expansion.remove(q_expansion[-1])
                 query_list.extend(q_expansion)
@@ -397,7 +421,7 @@ def expanding_query_withDeleting(q_list, qset_dict, k):  # 依此使用wordNet,s
     return query_list, qset_dict
 
 
-def replace_with_word2vec(token):   # 使用word2vec替换token成新的token。
+def replace_with_word2vec(token):  # 使用word2vec替换token成新的token。
     re_token = ""
     results = model.most_similar(token, topn=100)
     for item in results:
@@ -451,7 +475,7 @@ def replace_synonyms(qlist, qSet_dict):  # 遍历分词后的word列表，并将
                 print("直接使用word2vec将：", token, " 替换成：", re_token)
                 queryList.append(re_token)
                 qSet_dict[re_token] = [re_token]
-        else:   # 不需要被替换
+        else:  # 不需要被替换
             queryList.append(token)
             qSet_dict[token] = [token]
     return queryList, qSet_dict
@@ -467,11 +491,9 @@ def process_query(context):
         flag = pos[i].strip()
         if word not in stopwords and flag not in flags:
             qs.append(word)
-    # query = psg.cut(context)  # jieba分词取消
-    # qs = []
-    # for word, flag in query:
-    #     if word not in stopwords and flag in flags:
-    #         qs.append(word)
+        if word == '她':
+            qs.append("妻子")
+            qs.append("姑娘")
     qs = list(set(qs))
     query_set_dict = {}  # {q1:[q1,...], q2:[q2,...], q3:[q3,...]}
     for q in qs:
@@ -480,11 +502,17 @@ def process_query(context):
     qs, query_set_dict = replace_synonyms(qs, query_set_dict)  # 替换不在词表中的词
     print("进行近义词替换后的结果：", qs)
     print(query_set_dict)
-    old_qs = qs.copy()  # 进行扩充之前的query
-    if len(qs) <= 2:  # 若此时词语很少
-        qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, k=2)
     if len(qs) > 3:
-        qs = cut_query(qs, k=3)
+        print("裁剪关键词至3个。")
+        qs, query_set_dict = cut_query(qs, query_set_dict, k=3)
+        print(qs)
+        print(query_set_dict)
+    old_qs = qs.copy()  # 进行扩充之前的query
+    if len(qs) <= 3:  # 若此时词语很少
+        qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, k=2)
+
+    # if len(qs) > 3:
+    #     qs = cut_query(qs, k=3)
 
     print("初步检索的结果：")
     print(query_set_dict)
