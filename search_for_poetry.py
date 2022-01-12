@@ -15,6 +15,7 @@ import functools
 import synonyms
 from util.utils import normalization, compare_right, compare_left, wash_list, wash_content
 
+
 # 可接受词性 jieba
 # flags = ['a', 'j', 'n', 'vn', 'ns', 't', 'v', 's', 'ad', 'ag', 'an', 'ng', 'tg', 'vg', 'vd', 's', 'i', 'l']
 flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x', 'd']  # 停止词性 LTP
@@ -282,24 +283,26 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
         for item in paragraph_score_count:
             paragraph_score_new.append(item[1])
-    sen_list = [query_context]
+    sen_embeddings = [sentence_model.encode([query_context])[0]]
     for item in paragraph_score_new:
         sen_results = sentence_fromPoetry(item, qs)
         for sen in sen_results:
-            sen_list.append(sen[2] + sen[4])
+            sen_embeddings.append(sentence_model.encode([sen[2] + sen[4]])[0])
+    results = cosine_similarity([sen_embeddings[0]], sen_embeddings[1:])
+    results.tolist()
     # 分成多个batch。
-    sentence_embeddings = []
-    for sen in sen_list:
-        item = list(sentence_model.encode([sen])[0])
-        sentence_embeddings.append(item)
-    sentence_embeddings = torch.tensor([i.cpu().detach().numpy() for i in sentence_embeddings]).cuda()
-    cosine_results = cosine_similarity([sentence_embeddings[0], sentence_embeddings[1:]])
+    # sentence_embeddings = []
+    # for sen in sen_list:
+    #     item = list(sentence_model.encode([sen])[0])
+    #     sentence_embeddings.append(item)
+    # sentence_embeddings = torch.tensor([i.cpu().detach().numpy() for i in sentence_embeddings]).cuda()
+    # cosine_results = cosine_similarity([sentence_embeddings[0], sentence_embeddings[1:]])
     for i in range(len(paragraph_score_new)):
         item = paragraph_score_new[i]
         print("诗歌：", item[1], " 作者：", item[2])
         sentence_result = sentence_fromPoetry(item, qs)
         for item in sentence_result:
-            print(cosine_results[i], " ", item)
+            print(results[0][i], " ", item)
     return paragraph_score_new
 
 
