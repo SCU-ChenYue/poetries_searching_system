@@ -7,7 +7,7 @@ from gensim.summarization import bm25
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import csv
-import torch
+import gensim
 from gensim.models import KeyedVectors
 import jieba.posseg as psg
 from ltp import LTP
@@ -27,7 +27,7 @@ dicpath = "checkpoint/checkpoint_100topics_100epoch/poetry_dic.dict"
 ldapath = "checkpoint/checkpoint_100topics_100epoch/poetry_lda.model"
 allTagpath = "去重之后/分别提取的数据/tag.txt"
 stop_path = "stopwords.txt"
-sentence_model = SentenceTransformer('bert-base-nli-mean-tokens')
+sentence_model = SentenceTransformer('hfl/chinese-bert-wwm-ext')
 stopwords = get_stopwords(stop_path)
 tfidfModel = TfidfModel.load(tfidfPath)
 ldaModel = LdaModel.load(ldapath)
@@ -79,16 +79,15 @@ def tfidf_normalization(qTFIDF):  # 对query的tifdf结果进行归一化
 
 
 # item：分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
-def LDA_scores(query_list, item):  # 判断所在诗歌内容的词语，是否是其关键主题词。
-    inside_qList = []
-    for q in query_list:
-        if q in item[5] or q in item[7]:
-            inside_qList.append(q)
-    # 先获取文档的主题分布
-    seg, hidden = ltp.seg([item[5] + item[7]])
-    corpus_doc = [dictionary.doc2bow(seg[0])]
-    topics_docs = ldaModel.get_document_topics(corpus_doc)
-    topics_doc = topics_docs[0]
+def LDA_sim(str1, str2):  # 判断所在诗歌内容的词语，是否是其关键主题词。
+    seg1, hidden1 = ltp.seg([str1])
+    seg2, hidden2 = ltp.seg([str2])
+    vec_bow_1 = dictionary.doc2bow(seg1[0])
+    vec_bow_2 = dictionary.doc2bow(seg2[0])
+    vec_lda_1 = ldaModel[vec_bow_1]
+    vec_lda_2 = ldaModel[vec_bow_2]
+    sim = gensim.matutils.cossim(vec_lda_1, vec_lda_2)
+    return sim
 
 
 def cut_query(qlist, qSet_dict, k=5):  # 检索词组成的词语列表。应该在所有词替换完成后使用。
@@ -105,9 +104,9 @@ def cut_query(qlist, qSet_dict, k=5):  # 检索词组成的词语列表。应该
     token_state = token_state[:k]
     newQuery_list = [item[0] for item in token_state]
     keys = qSet_dict.keys()
-    for item in token_state[k:]:
-        if item[0] in keys:
-            qSet_dict.pop(item[0])
+    remove_keys = [key for key in keys if key not in newQuery_list]
+    for key in remove_keys:
+        qSet_dict.pop(key)
     return newQuery_list, qSet_dict
 
 
@@ -284,25 +283,25 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         for item in paragraph_score_count:
             paragraph_score_new.append(item[1])
     sen_embeddings = [sentence_model.encode([query_context])[0]]
+    count = 0
     for item in paragraph_score_new:
         sen_results = sentence_fromPoetry(item, qs)
         for sen in sen_results:
+            count += 1
             sen_embeddings.append(sentence_model.encode([sen[2] + sen[4]])[0])
+
     results = cosine_similarity([sen_embeddings[0]], sen_embeddings[1:])
+    if count != len(results[0]):
+        print("Bert分数计算没有对齐！")
     results.tolist()
-    # 分成多个batch。
-    # sentence_embeddings = []
-    # for sen in sen_list:
-    #     item = list(sentence_model.encode([sen])[0])
-    #     sentence_embeddings.append(item)
-    # sentence_embeddings = torch.tensor([i.cpu().detach().numpy() for i in sentence_embeddings]).cuda()
-    # cosine_results = cosine_similarity([sentence_embeddings[0], sentence_embeddings[1:]])
     for i in range(len(paragraph_score_new)):
         item = paragraph_score_new[i]
         print("诗歌：", item[1], " 作者：", item[2])
-        sentence_result = sentence_fromPoetry(item, qs)
+        sentence_result = sentence_fromPoetry(item, qs)  # [(score, content, translation, [q1, q2, q3], analyze), ...]
         for item in sentence_result:
-            print(results[0][i], " ", item)
+            qs_string = '，'.join(qs)
+            ldaScore = LDA_sim(qs_string, item[4])
+            print("Bert分数：", results[0][i], " ", "LDA分数：", ldaScore, " ", item)
     return paragraph_score_new
 
 
