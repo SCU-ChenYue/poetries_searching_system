@@ -22,9 +22,9 @@ flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x', 'd']  # 停�
 # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
 corpus_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"
 embedding_path = "wordEmbedding/sgns.baidubaike.bigram-char"
-tfidfPath = "checkpoint/checkpoint_100topics_100epoch/poetry_tfidf.model"
-dicpath = "checkpoint/checkpoint_100topics_100epoch/poetry_dic.dict"
-ldapath = "checkpoint/checkpoint_100topics_100epoch/poetry_lda.model"
+tfidfPath = "checkpoint/checkpoint_100topics_50epoch/poetry_tfidf.model"
+dicpath = "checkpoint/checkpoint_100topics_50epoch/poetry_dic.dict"
+ldapath = "checkpoint/checkpoint_100topics_50epoch/poetry_lda.model"
 allTagpath = "去重之后/分别提取的数据/tag.txt"
 stop_path = "stopwords.txt"
 sentence_model = SentenceTransformer('hfl/chinese-bert-wwm-ext')
@@ -282,18 +282,19 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
         for item in paragraph_score_count:
             paragraph_score_new.append(item[1])
-    sen_embeddings = [sentence_model.encode([query_context])[0]]
-    count = 0
-    for item in paragraph_score_new:
-        sen_results = sentence_fromPoetry(item, qs)
-        for sen in sen_results:
-            count += 1
-            sen_embeddings.append(sentence_model.encode([sen[2] + sen[4]])[0])
-
-    results = cosine_similarity([sen_embeddings[0]], sen_embeddings[1:])
-    if count != len(results[0]):
-        print("Bert分数计算没有对齐！")
-    results.tolist()
+    # sen_embeddings = [sentence_model.encode([query_context])[0]]
+    # count = 0
+    # for item in paragraph_score_new:
+    #     sen_results = sentence_fromPoetry(item, qs)
+    #     for sen in sen_results:
+    #         count += 1
+    #         sen_embeddings.append(sentence_model.encode([sen[2] + sen[4]])[0])
+    #
+    # results = cosine_similarity([sen_embeddings[0]], sen_embeddings[1:])
+    # if count != len(results[0]):
+    #     print("Bert分数计算没有对齐！")
+    # results.tolist()
+    query_embeddings = sentence_model.encode([query_context])[0]
     for i in range(len(paragraph_score_new)):
         item = paragraph_score_new[i]
         print("诗歌：", item[1], " 作者：", item[2])
@@ -301,7 +302,9 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         for item in sentence_result:
             qs_string = '，'.join(qs)
             ldaScore = LDA_sim(qs_string, item[4])
-            print("Bert分数：", results[0][i], " ", "LDA分数：", ldaScore, " ", item)
+            context_embeddings = sentence_model.encode([item[2] + item[4]])[0]
+            cos = cosine_similarity([query_embeddings], [context_embeddings])
+            print("Bert分数：", cos[0][0], " ", "LDA分数：", ldaScore, " ", item)
     return paragraph_score_new
 
 
