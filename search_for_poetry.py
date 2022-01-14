@@ -247,7 +247,7 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         paragraph_score.append((scores[i], poetryList[i][1], poetryList[i][2], poetryList[i][3], poetryList[i][4],
                                 poetryList[i][5], poetryList[i][6], poetryList[i][7], poetryList[i][8]))
     paragraph_score.sort(key=functools.cmp_to_key(compare_left))
-    paragraph_score = [item for item in paragraph_score[:25] if item[0] > 0]
+    paragraph_score = [item for item in paragraph_score if item[0] > 0]
     print("获取到：", len(paragraph_score), "条结果。")
     paragraph_score_new = []
     # 几种mode都是在对诗进行排名。
@@ -289,22 +289,24 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
     #     for sen in sen_results:
     #         count += 1
     #         sen_embeddings.append(sentence_model.encode([sen[2] + sen[4]])[0])
-    #
     # results = cosine_similarity([sen_embeddings[0]], sen_embeddings[1:])
     # if count != len(results[0]):
     #     print("Bert分数计算没有对齐！")
     # results.tolist()
+    qs_string = '，'.join(qs)
     query_embeddings = sentence_model.encode([query_context])[0]
-    for i in range(len(paragraph_score_new)):
-        item = paragraph_score_new[i]
-        print("诗歌：", item[1], " 作者：", item[2])
-        sentence_result = sentence_fromPoetry(item, qs)  # [(score, content, translation, [q1, q2, q3], analyze), ...]
+    for i in range(len(paragraph_score_new)):   # 遍历每首诗
+        poetry_item = paragraph_score_new[i]  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
+        poetry_lda_score = LDA_sim(qs_string, poetry_item[7])
+        print("诗歌：", poetry_item[1], " 作者：", poetry_item[2])
+        # [(score, content, translation, [q1, q2, q3], analyze), ...]
+        sentence_result = sentence_fromPoetry(poetry_item, qs)
         for item in sentence_result:
-            qs_string = '，'.join(qs)
             ldaScore = LDA_sim(qs_string, item[4])
             context_embeddings = sentence_model.encode([item[2] + item[4]])[0]
             cos = cosine_similarity([query_embeddings], [context_embeddings])
-            print("Bert分数：", cos[0][0], " ", "LDA分数：", ldaScore, " ", item)
+            print("Bert分数：", cos[0][0], " ", "整诗的LDA分数：", poetry_lda_score, " ",
+                  "对应文段的LDA分数：", ldaScore, " ", item)
     return paragraph_score_new
 
 
@@ -530,6 +532,7 @@ def process_query(context):
     #     qs = cut_query(qs, k=3)
     print("初步检索的结果：")
     print(query_set_dict)
+    # 进行搜索
     paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, mode=2)
     # 自动扩充搜索范围
     if len(paragraph_score) == 0 or paragraph_score[0][0] <= 8:  # 若没有获取到结果，或者分数都不高
