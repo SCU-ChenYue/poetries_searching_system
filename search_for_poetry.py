@@ -247,7 +247,7 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         paragraph_score.append((scores[i], poetryList[i][1], poetryList[i][2], poetryList[i][3], poetryList[i][4],
                                 poetryList[i][5], poetryList[i][6], poetryList[i][7], poetryList[i][8]))
     paragraph_score.sort(key=functools.cmp_to_key(compare_left))
-    paragraph_score = [item for item in paragraph_score if item[0] > 0]
+    paragraph_score = [item for item in paragraph_score[:25] if item[0] > 0]
     print("获取到：", len(paragraph_score), "条结果。")
     paragraph_score_new = []
     # 几种mode都是在对诗进行排名。
@@ -271,7 +271,7 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         paragraph_score_count = []
         keys = query_set_list.keys()
         for item in paragraph_score:
-            count = 0  # 为1则全部都在，为0则有的不在。
+            count = 0
             for key in keys:
                 q_set_list = query_set_list[key]
                 for qq in q_set_list:
@@ -280,19 +280,27 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
                         break
             paragraph_score_count.append([count, item])
         paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
-        for item in paragraph_score_count:
-            paragraph_score_new.append(item[1])
-    # sen_embeddings = [sentence_model.encode([query_context])[0]]
-    # count = 0
-    # for item in paragraph_score_new:
-    #     sen_results = sentence_fromPoetry(item, qs)
-    #     for sen in sen_results:
-    #         count += 1
-    #         sen_embeddings.append(sentence_model.encode([sen[2] + sen[4]])[0])
-    # results = cosine_similarity([sen_embeddings[0]], sen_embeddings[1:])
-    # if count != len(results[0]):
-    #     print("Bert分数计算没有对齐！")
-    # results.tolist()
+        left, right = 0, 0  # 算法：对于count相同的item，拥有old_query较多的优先排在前面。
+        paragraph_new = []
+        while right <= len(paragraph_score_count):
+            if right == len(paragraph_score_count) or paragraph_score_count[left][0] != paragraph_score_count[right][0]:
+                temps = paragraph_score_count[left:right]
+                temps_count = []
+                for temp in temps:
+                    count = 0
+                    for qb in old_query:
+                        if qb in temp[1][4] or qb in temp[1][5] or qb in temp[1][7]:
+                            count += 1
+                    temps_count.append([count, temp])
+                temps_count.sort(key=functools.cmp_to_key(compare_left))
+                paragraph_new.extend(temps_count)
+                if right == len(paragraph_score_count):
+                    break
+                left = right
+            elif paragraph_score_count[left][0] == paragraph_score_count[right][0]:
+                right += 1
+        for item in paragraph_new:
+            paragraph_score_new.append(item[1][1])
     qs_string = '，'.join(qs)
     query_embeddings = sentence_model.encode([query_context])[0]
     for i in range(len(paragraph_score_new)):   # 遍历每首诗
@@ -305,8 +313,14 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
             ldaScore = LDA_sim(qs_string, item[4])
             context_embeddings = sentence_model.encode([item[2] + item[4]])[0]
             cos = cosine_similarity([query_embeddings], [context_embeddings])
-            print("Bert分数：", cos[0][0], " ", "整诗的LDA分数：", poetry_lda_score, " ",
-                  "对应文段的LDA分数：", ldaScore, " ", item)
+            print("整诗的BM25分数：", poetry_item[0], " Bert分数：", cos[0][0],
+                  " 整诗的LDA分数：", poetry_lda_score, " 对应文段的LDA分数：", ldaScore)
+            print("原文与赏析的BM25分数：", item[0])
+            print("关键词：", item[3])
+            print("原文：", item[1])
+            print("译文：", item[2])
+            print("赏析：", item[4])
+            print("\n")
     return paragraph_score_new
 
 
@@ -342,7 +356,8 @@ def expanding_query_withDeleting(q_list, qset_dict, k):  # 依此使用wordNet,s
                 if len(q_expansion) >= k + 1:  # 最多为k+1个，因为wordnet中的补充不删除
                     break
                 if wordnets[i] in tagList and wordnets[i] not in query_list and wordnets[i] not in q_expansion:
-                    q_expansion.append(wordnets[i])
+                    if model.similarity(q, wordnets[i]) >= 0.5:
+                        q_expansion.append(wordnets[i])
             if len(q_expansion) == k + 1:
                 query_list.extend(q_expansion)
                 print(q, " 的最终扩充结果为：", q_expansion)
