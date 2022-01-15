@@ -225,18 +225,9 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
                 else:
                     maxSentence = [(max(value[0][0], value[1][0]), value[0][1] + value[1][1], value[0][2] + value[1][2],
                                     query_list, key)]
-    if maxCount > 0:
-        return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
-    else:
-        # print(maxCount)
-        # # [[sentence, trans, paragraph],...]
-        # for item in sentenceAnalyzes:
-        #     for qt in qs:
-        #         print(qt)
-        #         if qt in item[0] or qt in item[1] or item[2]:
-        #             maxSentence.append((item[0], item[1], item[2]))
-        #             break
-        return maxSentence
+    if maxSentence[0][0] < 3:
+        return []
+    return maxSentence  # 函数返回的是包含了最多检索词的赏析所在的诗句
 
 
 # 对搜索到的所有诗的结果进行排名。mode=1：若结果中包含了原始的、扩充前的query，则排在前面。mode=2：若结果包含了分别被扩充的多个query，则排在前面。
@@ -306,16 +297,18 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
     for i in range(len(paragraph_score_new)):   # 遍历每首诗
         poetry_item = paragraph_score_new[i]  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
         poetry_lda_score = LDA_sim(qs_string, poetry_item[7])
-        print("诗歌：", poetry_item[1], " 作者：", poetry_item[2])
         # [(score, content, translation, [q1, q2, q3], analyze), ...]
         sentence_result = sentence_fromPoetry(poetry_item, qs)
+        if not sentence_result:
+            continue
+        print("诗歌：", poetry_item[1], " 作者：", poetry_item[2])
         for item in sentence_result:
             ldaScore = LDA_sim(qs_string, item[4])
             context_embeddings = sentence_model.encode([item[2] + item[4]])[0]
             cos = cosine_similarity([query_embeddings], [context_embeddings])
-            print("整诗的BM25分数：", poetry_item[0], " Bert分数：", cos[0][0],
-                  " 整诗的LDA分数：", poetry_lda_score, " 对应文段的LDA分数：", ldaScore)
-            print("原文与赏析的BM25分数：", item[0])
+            print("整诗的BM25分数:", poetry_item[0], " Bert分数:", cos[0][0],
+                  " 整诗的LDA分数:", poetry_lda_score, " 对应文段的LDA分数:", ldaScore)
+            print("原文与赏析的BM25分数:", item[0])
             print("关键词：", item[3])
             print("原文：", item[1])
             print("译文：", item[2])
