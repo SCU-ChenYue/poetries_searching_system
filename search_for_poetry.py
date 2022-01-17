@@ -8,6 +8,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import csv
 import gensim
+from text2vec import Similarity
 from gensim.models import KeyedVectors
 import jieba.posseg as psg
 from ltp import LTP
@@ -22,9 +23,9 @@ flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x', 'd']  # 停�
 # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
 corpus_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"
 embedding_path = "wordEmbedding/sgns.baidubaike.bigram-char"
-tfidfPath = "checkpoint/checkpoint_100topics_50epoch/poetry_tfidf.model"
-dicpath = "checkpoint/checkpoint_100topics_50epoch/poetry_dic.dict"
-ldapath = "checkpoint/checkpoint_100topics_50epoch/poetry_lda.model"
+tfidfPath = "checkpoint/checkpoint_100topics_100epoch/poetry_tfidf.model"
+dicpath = "checkpoint/checkpoint_100topics_100epoch/poetry_dic.dict"
+ldapath = "checkpoint/checkpoint_100topics_100epoch/poetry_lda.model"
 allTagpath = "去重之后/分别提取的数据/tag.txt"
 stop_path = "stopwords.txt"
 sentence_model = SentenceTransformer('hfl/chinese-bert-wwm-ext')
@@ -33,8 +34,8 @@ tfidfModel = TfidfModel.load(tfidfPath)
 ldaModel = LdaModel.load(ldapath)
 dictionary = corpora.Dictionary.load(dicpath)
 model = KeyedVectors.load_word2vec_format(embedding_path, binary=False)
-words = model.vocab
-words_list = [word for i, word in enumerate(words)]  # 词向量文件中的词列表
+words_list = model.index_to_key  # 词向量文件中的词列表
+textSim = Similarity()
 ltp = LTP(path="base")
 
 
@@ -266,11 +267,13 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
             poetry_keyword = []
             for key in keys:
                 q_set_list = query_set_list[key]
+                flag = 0
                 for qq in q_set_list:
                     if qq in item[4] or qq in item[5] or qq in item[7]:
-                        count += 1  # 统计同时是q1,q2,q3的列表中的词语
+                        if flag == 0:
+                            count += 1  # 统计同时是q1,q2,q3的列表中的词语
+                            flag = 1
                         poetry_keyword.append(qq)
-                        break
             paragraph_score_count.append([count, item, poetry_keyword])
         paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
         left, right = 0, 0  # 算法：对于count相同的item，拥有old_query较多的优先排在前面。
@@ -293,7 +296,6 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
             elif paragraph_score_count[left][0] == paragraph_score_count[right][0]:
                 right += 1
         for item in paragraph_new:
-            print(item)
             paragraph_score_new.append([item[1][1], item[1][2]])
     qs_string = '，'.join(qs)
     query_embeddings = sentence_model.encode([query_context])[0]
@@ -309,9 +311,13 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
             ldaScore = LDA_sim(qs_string, item[4])
             context_embeddings = sentence_model.encode([item[2] + item[4]])[0]
             cos = cosine_similarity([query_embeddings], [context_embeddings])
+            beforeExpandSim = textSim.get_score(query_context, item[2] + item[4])
+            afterExpandSim = textSim.get_score(qs_string, item[2] + item[4])
             print("整诗的BM25分数:", poetry_item[0], " Bert分数:", cos[0][0],
                   " 整诗的LDA分数:", poetry_lda_score, " 对应文段的LDA分数:", ldaScore)
             print("原文与赏析的BM25分数:", item[0])
+            print("扩充前的query与文段的相似度：", beforeExpandSim)
+            print("扩充后的query与文段的相似度：", afterExpandSim)
             print("整诗的关键词：", paragraph_score_new[i][1])
             print("文段的关键词：", item[3])
             print("原文：", item[1])
@@ -547,7 +553,7 @@ def process_query(context):
     # 进行搜索
     paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, mode=2)
     # 自动扩充搜索范围
-    if len(paragraph_score) == 0 or paragraph_score[0][0] <= 8:  # 若没有获取到结果，或者分数都不高
+    if len(paragraph_score) == 0 or paragraph_score[0][0][0] <= 8:  # 若没有获取到结果，或者分数都不高
         if len(qs) > 5:  # 如果关键词太多，则需要取重要的
             # qs = cut_query(context, qs, k=5)
             qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 3)
