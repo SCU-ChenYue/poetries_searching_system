@@ -263,13 +263,15 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
         keys = query_set_list.keys()
         for item in paragraph_score:
             count = 0
+            poetry_keyword = []
             for key in keys:
                 q_set_list = query_set_list[key]
                 for qq in q_set_list:
                     if qq in item[4] or qq in item[5] or qq in item[7]:
                         count += 1  # 统计同时是q1,q2,q3的列表中的词语
+                        poetry_keyword.append(qq)
                         break
-            paragraph_score_count.append([count, item])
+            paragraph_score_count.append([count, item, poetry_keyword])
         paragraph_score_count.sort(key=functools.cmp_to_key(compare_left))
         left, right = 0, 0  # 算法：对于count相同的item，拥有old_query较多的优先排在前面。
         paragraph_new = []
@@ -291,11 +293,12 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
             elif paragraph_score_count[left][0] == paragraph_score_count[right][0]:
                 right += 1
         for item in paragraph_new:
-            paragraph_score_new.append(item[1][1])
+            print(item)
+            paragraph_score_new.append([item[1][1], item[1][2]])
     qs_string = '，'.join(qs)
     query_embeddings = sentence_model.encode([query_context])[0]
     for i in range(len(paragraph_score_new)):   # 遍历每首诗
-        poetry_item = paragraph_score_new[i]  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
+        poetry_item = paragraph_score_new[i][0]  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
         poetry_lda_score = LDA_sim(qs_string, poetry_item[7])
         # [(score, content, translation, [q1, q2, q3], analyze), ...]
         sentence_result = sentence_fromPoetry(poetry_item, qs)
@@ -309,7 +312,8 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
             print("整诗的BM25分数:", poetry_item[0], " Bert分数:", cos[0][0],
                   " 整诗的LDA分数:", poetry_lda_score, " 对应文段的LDA分数:", ldaScore)
             print("原文与赏析的BM25分数:", item[0])
-            print("关键词：", item[3])
+            print("整诗的关键词：", paragraph_score_new[i][1])
+            print("文段的关键词：", item[3])
             print("原文：", item[1])
             print("译文：", item[2])
             print("赏析：", item[4])
