@@ -19,7 +19,7 @@ from util.utils import normalization, compare_right, compare_left, wash_list, wa
 
 # 可接受词性 jieba
 # flags = ['a', 'j', 'n', 'vn', 'ns', 't', 'v', 's', 'ad', 'ag', 'an', 'ng', 'tg', 'vg', 'vd', 's', 'i', 'l']
-flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x', 'd']  # 停止词性 LTP
+flags = ['c', 'e', 'm', 'nh', 'o', 'p', 'r', 'u', 'wp', 'ws', 'x', 'd']  # 停用词性 LTP
 # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
 corpus_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"
 embedding_path = "wordEmbedding/sgns.baidubaike.bigram-char"
@@ -34,7 +34,7 @@ ldaModel = LdaModel.load(ldapath)
 dictionary = corpora.Dictionary.load(dicpath)
 model = KeyedVectors.load_word2vec_format(embedding_path, binary=False)
 words_list = model.index_to_key  # 词向量文件中的词列表
-textSim = Similarity()
+textSim = Similarity(embedding_type='sbert')
 ltp = LTP(path="base")
 
 
@@ -57,11 +57,13 @@ def get_corpus(path):
     corpus = []
     poetry_list = []
     f = csv.reader(open(path, 'r', encoding='utf-8'))
+    filesname = []
     for i in f:
         if len(i) == 0 or i[0] == '编号':
             continue
         tags = i[8].split("，")
         corpus.append(tags)
+        filesname.append(i[1])
         poetry_list.append(i)
     bm25Model = bm25.BM25(corpus)
     return bm25Model, poetry_list
@@ -203,7 +205,7 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
     # 首先通过是否出现在原文、译文的方式找关键句。
 
     maxCount = 0
-    maxSentence = []  # [(score, content, translation, [q1, q2, q3])]
+    maxSentence = []  # [(score, content, translation, [q1, q2, q3], analyze)]
     for key, value in scoreDict.items():  # 找出包含最多keyword的赏析对应的最高和第二高句子。
         query_list = []
         count = 0
@@ -227,6 +229,8 @@ def sentence_fromPoetry(poetry_item, qs):  # 对于一首诗，利用原文、�
                 else:
                     maxSentence = [((value[0][0] + value[1][0])/2, value[0][1] + value[1][1], value[0][2] + value[1][2],
                                    query_list, key)]
+    if len(maxSentence) == 0:
+        return maxSentence
     if float(maxSentence[0][0]) < 3:    # 可以考虑判断使用整诗，只要不太长（或整体分数还不错）。
         content, translation = content.replace("|", ""), translation.replace("|", "")
         analyze = analyze.replace("|", "")
@@ -251,16 +255,16 @@ def get_maxSenLength_fromPoetry(poetry_item):   # 返回最长的诗句长度
 
 
 # 对搜索到的所有诗的结果进行排名。mode=1：若结果中包含了原始的、扩充前的query，则排在前面。mode=2：若结果包含了分别被扩充的多个query，则排在前面。
-def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # mode为0则不需要将包含了old_query的排在前面
+def get_result(query_context, qs, aidf, old_query, query_set_list, context_tokens, mode=0):  # mode为0则不需要将包含了old_query的排在前面
     scores = BM25Model.get_scores(qs, aidf)  # 输入的文本内容必须是由关键词组成的列表
     paragraph_score = []
     for i in range(len(scores)):  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
         paragraph_score.append((scores[i], poetryList[i][1], poetryList[i][2], poetryList[i][3], poetryList[i][4],
                                 poetryList[i][5], poetryList[i][6], poetryList[i][7], poetryList[i][8]))
     paragraph_score.sort(key=functools.cmp_to_key(compare_left))
+    # paragraph_score = [item for item in paragraph_score if item[0] > 0 and get_maxSenLength_fromPoetry(item) < 100]
     paragraph_score = [item for item in paragraph_score if item[0] > 0 and get_maxSenLength_fromPoetry(item) < 100]
-    # paragraph_score = [item for item in paragraph_score if item[0] > 0]
-    paragraph_score = paragraph_score[:25]
+    # paragraph_score = paragraph_score[:25]
     print("获取到：", len(paragraph_score), "条结果。")
     paragraph_score_new = []
     # 几种mode都是在对诗进行排名。
@@ -280,7 +284,8 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
                 paragraph_score_new.append(item)
     elif mode == 0:
         paragraph_score_new = paragraph_score
-    elif mode == 2:  # query_set_list: {q1:[q1,...], q2:[q2,...], q3:[q3,...]}，根据出现在用户输入中的词的数量
+    elif mode == 2:
+        # query_set_list: {q1:[q1,...], q2:[q2,...], q3:[q3,...]}，根据出现在用户输入中的词的数量
         paragraph_score_count = []
         keys = query_set_list.keys()
         for item in paragraph_score:
@@ -322,16 +327,19 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
     SBert_items = []
     for i in range(len(paragraph_score_new)):   # 遍历每首诗
         poetry_item = paragraph_score_new[i][0]  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
-        poetry_lda_score = LDA_sim(qs_string, poetry_item[7])
+        # poetry_lda_score = LDA_sim(qs_string, poetry_item[7])
         # [(score, content, translation, [q1, q2, q3], analyze), ...]
         sentence_result = sentence_fromPoetry(poetry_item, qs)
-        if not sentence_result:
+        if len(sentence_result) == 0:
             continue
         # print("诗歌：", poetry_item[1], " 作者：", poetry_item[2])
-        for item in sentence_result:
+        for item in sentence_result:    # [(score, content, translation, [q1, q2, q3], analyze)]
             ldaScore = LDA_sim(qs_string, item[4])
-            beforeExpandSim = textSim.get_score(query_context, item[2] + item[4])
-            SBert_items.append([beforeExpandSim, poetry_item[1], poetry_item[2], paragraph_score_new[i][1], item])
+            analyzeQuerySim = textSim.get_score(query_context, item[4])   # 用户输入和赏析之间的分数
+            transQuerySim = textSim.get_score(query_context, item[2])     # 用户输入和译文之间的分数
+            transAnalyzeQuerySim = textSim.get_score(query_context, item[2] + item[4])  # 用户输入和译文、赏析之间的分数
+            SBert_items.append([transAnalyzeQuerySim, transQuerySim, analyzeQuerySim,
+                                poetry_item[1], poetry_item[2], paragraph_score_new[i][1], item])
             # print("整诗的BM25分数:", poetry_item[0], " 整诗的LDA分数:", poetry_lda_score, " 对应文段的LDA分数:", ldaScore)
             # print("原文与赏析的BM25分数:", item[0])
             # print("SBert分数：", beforeExpandSim)
@@ -342,14 +350,16 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, mode=0):  # m
             # print("赏析：", item[4])
             # print("\n")
     SBert_items.sort(key=functools.cmp_to_key(compare_left))
-    for item in SBert_items:
-        print("SBert分数为", item[0])
-        print("文段的关键词为：", item[4][3])
-        print("整诗的关键词为：", item[3])
-        print("诗歌：", item[1], " 作者：", item[2])
-        print("原文：", item[4][1])
-        print("译文：", item[4][2])
-        print("赏析：", item[4][4])
+    for item in SBert_items[:40]:
+        print("译文+赏析的SBert分数为", item[0])
+        print("译文的SBert分数为", item[1])
+        print("赏析的SBert分数为", item[2])
+        print("文段的关键词为：", item[6][3])
+        print("整诗的关键词为：", item[5])
+        print("诗歌：", item[3], " 作者：", item[4])
+        print("原文：", item[6][1])
+        print("译文：", item[6][2])
+        print("赏析：", item[6][4])
         print("\n")
     return paragraph_score_new
 
@@ -555,7 +565,6 @@ def replace_synonyms(qlist, qSet_dict):  # 遍历分词后的word列表，并将
                             print("用word2vec替换：", token, " 为：", ree_token)
                             queryList.append(ree_token)
                             qSet_dict[ree_token] = [ree_token]
-
         else:  # 不需要被替换
             queryList.append(token)
             qSet_dict[token] = [token]
@@ -567,9 +576,11 @@ def process_query(context):
     seg = seg[0]
     pos = ltp.pos(hidden)[0]
     qs = []
+    context_tokens = []
     for i in range(len(seg)):  # 对输入的query进行分词，并去除停用词
         word = seg[i].strip()
         flag = pos[i].strip()
+        context_tokens.append(word)
         if word not in stopwords and flag not in flags:
             qs.append(word)
         if word == '她':
@@ -597,7 +608,7 @@ def process_query(context):
     print(query_set_dict)
     print(qs)
     # 进行搜索
-    paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, mode=2)
+    paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, context_tokens, mode=2)
     # 自动扩充搜索范围
     if len(paragraph_score) == 0 or paragraph_score[0][0][0] <= 8:  # 若没有获取到结果，或者分数都不高
         if len(qs) > 5:  # 如果关键词太多，则需要取重要的
@@ -610,7 +621,7 @@ def process_query(context):
         else:
             qs, query_set_dict = expanding_query_withDeleting(qs, query_set_dict, 4)
         print("扩充后再次检索：")
-        new_paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, mode=2)
+        new_paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, context_tokens, mode=2)
 
 
 if __name__ == '__main__':
