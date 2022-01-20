@@ -4,7 +4,7 @@ from gensim.models import TfidfModel, LdaModel
 from model_TFIDF_LDA import get_stopwords
 from nltk.corpus import wordnet as wn
 from gensim.summarization import bm25
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, util
 from sklearn.metrics.pairwise import cosine_similarity
 import csv
 import gensim
@@ -35,7 +35,6 @@ dictionary = corpora.Dictionary.load(dicpath)
 model = KeyedVectors.load_word2vec_format(embedding_path, binary=False)
 sentence_model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
 words_list = model.index_to_key  # 词向量文件中的词列表
-textSim = Similarity(embedding_type='sbert')
 ltp = LTP(path="base")
 
 
@@ -350,52 +349,82 @@ def get_result(query_context, qs, aidf, old_query, query_set_list, context_token
 
     qs_string = '，'.join(qs)
     paragraph_score_new = paragraph_score_new[:50]  # 只截取前50个结果。
-    query_trans_embedding = sentence_model.encode([query_context])
+    query_embedding = sentence_model.encode(query_context, convert_to_tensor=True)
+    query_trans_Sentences, query_analyze_Sentences = [query_context], [query_context]
+    sentence_results = []
     for i in range(len(paragraph_score_new)):
-        query_trans_embedding.append()
-
-
-    SBert_items = []
-    for i in range(len(paragraph_score_new)):  # 遍历每首诗
-        poetry_item = paragraph_score_new[i][0]  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
-        # poetry_lda_score = LDA_sim(qs_string, poetry_item[7])
-        # [(score, content, translation, [q1, q2, q3], analyze), ...]
-        sentence_result = sentence_fromPoetry(poetry_item, qs)
+        poetry_item = paragraph_score_new[i][0]     # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
+        sentence_result = sentence_fromPoetry(poetry_item, qs)  # [score, content, translation, [q1, q2, q3], analyze]
         if len(sentence_result) == 0:
             continue
-        # print("诗歌：", poetry_item[1], " 作者：", poetry_item[2])
-        ldaScore = LDA_sim(qs_string, sentence_result[4])
-        trans_embeddings = sentence_model.encode([sentence_result[2]])
-        cos = cosine_similarity([query_embedding[0]], [trans_embeddings[0]])
-        analyzeQuerySim = textSim.get_score(query_context, sentence_result[4])  # 用户输入和赏析之间的分数
-        transQuerySim = textSim.get_score(query_context, sentence_result[2])  # 用户输入和译文之间的分数
-        # 用户输入和译文、赏析之间的分数
-        SBert_items.append([analyzeQuerySim, transQuerySim, cos,
-                            poetry_item[1], poetry_item[2], paragraph_score_new[i][1], sentence_result])
-        # print("整诗的BM25分数:", poetry_item[0], " 整诗的LDA分数:", poetry_lda_score, " 对应文段的LDA分数:", ldaScore)
-        # print("原文与赏析的BM25分数:", sentence_result[0])
-        # print("SBert分数：", beforeExpandSim)
-        # print("整诗的关键词：", paragraph_score_new[i][1])
-        # print("文段的关键词：", sentence_result[3])
-        # print("原文：", sentence_result[1])
-        # print("译文：", sentence_result[2])
-        # print("赏析：", sentence_result[4])
-        # print("\n")
-    SBert_items.sort(key=functools.cmp_to_key(compare_left))
-    SBert_items = SBert_items[:40]
-    print("获取到：", len(SBert_items), "条结果。")
-    for item in SBert_items:
-        print("赏析的SBert分数为", item[0])
-        print("译文的SBert分数为", item[1])
-        print("译文的hugging分数为", item[2])
-        print("文段的关键词为：", item[6][3])
-        print("整诗的关键词为：", item[5])
-        print("诗歌：", item[3], " 作者：", item[4])
-        print("原文：", item[6][1])
-        print("译文：", item[6][2])
-        print("赏析：", item[6][4])
+        query_trans_Sentences.append(sentence_result[2])
+        query_analyze_Sentences.append(sentence_result[4])
+        sentence_results.append([sentence_result, paragraph_score_new[i][1]])
+
+    query_trans_embedding = sentence_model.encode(query_trans_Sentences)
+    query_analyze_embedding = sentence_model.encode(query_analyze_Sentences)
+    query_trans_similarity = cosine_similarity([query_trans_embedding[0]], query_trans_embedding[1:])
+    query_analyze_similarity = cosine_similarity([query_analyze_embedding[0]], query_analyze_embedding[1:])
+    SBert_scores = []
+    maxQueryAnalyzeScore, maxQueryTransScore = 0, 0
+    for i in range(len(sentence_results)):
+        if query_analyze_similarity[0][i] > maxQueryAnalyzeScore:
+            maxQueryAnalyzeScore = query_analyze_similarity[0][i]
+        if query_trans_similarity[0][i] > maxQueryTransScore:
+            maxQueryTransScore = query_trans_similarity[0][i]
+        SBert_scores.append([query_analyze_similarity[0][i], query_trans_similarity[0][i], sentence_results[i]])
+    SBert_scores.sort(key=functools.cmp_to_key(compare_left))
+    for item in SBert_scores:
+        print("SBert对赏析的分数：", item[0])
+        print("SBert对译文的分数：", item[1])
+        print("文段的BM25分数：", item[2][0][0])
+        print("整诗的关键词：", item[2][1])
+        print("文段的关键词：", item[2][0][3])
+        print("原文：", item[2][0][1])
+        print("译文：", item[2][0][2])
+        print("赏析：", item[2][0][4])
         print("\n")
-    return SBert_items
+    # SBert_items = []
+    # for i in range(len(paragraph_score_new)):  # 遍历每首诗
+    #     poetry_item = paragraph_score_new[i][0]  # 分数，标题，作者，朝代，原文，翻译，注释，赏析，标签
+    #     # poetry_lda_score = LDA_sim(qs_string, poetry_item[7])
+    #     # [(score, content, translation, [q1, q2, q3], analyze), ...]
+    #     sentence_result = sentence_fromPoetry(poetry_item, qs)
+    #     if len(sentence_result) == 0:
+    #         continue
+    #     # print("诗歌：", poetry_item[1], " 作者：", poetry_item[2])
+    #     ldaScore = LDA_sim(qs_string, sentence_result[4])
+    #     trans_embeddings = sentence_model.encode([sentence_result[2]])
+    #     cos = cosine_similarity([query_embedding[0]], [trans_embeddings[0]])
+    #     analyzeQuerySim = textSim.get_score(query_context, sentence_result[4])  # 用户输入和赏析之间的分数
+    #     transQuerySim = textSim.get_score(query_context, sentence_result[2])  # 用户输入和译文之间的分数
+    #     # 用户输入和译文、赏析之间的分数
+    #     SBert_items.append([analyzeQuerySim, transQuerySim, cos,
+    #                         poetry_item[1], poetry_item[2], paragraph_score_new[i][1], sentence_result])
+    #     # print("整诗的BM25分数:", poetry_item[0], " 整诗的LDA分数:", poetry_lda_score, " 对应文段的LDA分数:", ldaScore)
+    #     # print("原文与赏析的BM25分数:", sentence_result[0])
+    #     # print("SBert分数：", beforeExpandSim)
+    #     # print("整诗的关键词：", paragraph_score_new[i][1])
+    #     # print("文段的关键词：", sentence_result[3])
+    #     # print("原文：", sentence_result[1])
+    #     # print("译文：", sentence_result[2])
+    #     # print("赏析：", sentence_result[4])
+    #     # print("\n")
+    # SBert_items.sort(key=functools.cmp_to_key(compare_left))
+    # SBert_items = SBert_items[:40]
+    # print("获取到：", len(SBert_items), "条结果。")
+    # for item in SBert_items:
+    #     print("赏析的SBert分数为", item[0])
+    #     print("译文的SBert分数为", item[1])
+    #     print("译文的hugging分数为", item[2])
+    #     print("文段的关键词为：", item[6][3])
+    #     print("整诗的关键词为：", item[5])
+    #     print("诗歌：", item[3], " 作者：", item[4])
+    #     print("原文：", item[6][1])
+    #     print("译文：", item[6][2])
+    #     print("赏析：", item[6][4])
+    #     print("\n")
+    return SBert_scores
 
 
 def expand_query_setList(q, qExpansion, qset_Dict):  # q，qExpansion是根据q扩充的
@@ -648,6 +677,8 @@ def process_query(context):
     print("初步检索的结果：")
     print(query_set_dict)
     print(qs)
+    if not qs:
+        return
     # 进行搜索
     paragraph_score = get_result(context, qs, average_idf, old_qs, query_set_dict, context_tokens)
 
