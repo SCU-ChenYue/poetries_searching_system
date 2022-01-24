@@ -3,7 +3,7 @@ import csv
 from tqdm import tqdm
 from match_analyze import choose_BM25, wash_analyze, Keyword_TextRank_TFIDF, get_TOPK_result
 from Levenshtein import *
-from util.utils import wash_content
+from util.utils import wash_content, wash_list, cut_sent, get_tags_fromSentence
 from ltp import LTP
 
 s1_path = "去重之后/总的去重合集/去重之后.csv"
@@ -13,12 +13,13 @@ t1_path = "去重之后/总的去重合集/格式化数据（赏析分段+赏析
 # ['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签']
 t2_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"
 t3_path = "去重之后/分别提取的数据/译文.txt"
-t4_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）2.csv"
-t5_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析与译文关键词LTP）.csv"
+t5_path = "去重之后/总的去重合集/诗级别的格式化数据（赏析分段+赏析去重+赏析、原文、译文关键词LTP）.csv"
 test1_path = "去重之后/总的去重合集/测试.csv"
 allTagpath = "去重之后/分别提取的数据/tag.txt"
 tfidfPath = "../checkpoint/checkpoint_8_jieba/poetry_tfidf.model"
 dicpath = "../checkpoint/checkpoint_8_jieba/poetry_dic.dict"
+senpath = "去重之后/总的去重合集/诗句与译文文件.csv"
+senpath2 = "去重之后/总的去重合集/诗句与译文文件（包括无赏析的）.csv"
 # ff = csv.reader(open(s3_path, 'r', encoding='utf-8'))
 # ff = list(ff)
 
@@ -255,50 +256,30 @@ def wash_csvAnalyze(path1, path2):
 
 def get_poetry_tag(spath, tpath):   # 给诗歌添加标签
     f1 = csv.reader(open(spath, 'r', encoding='utf-8'))
-    f2 = csv.writer(open(tpath, 'w+', encoding='utf-8'))
-    f2.writerow(['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '标签'])
+    # f2 = csv.writer(open(tpath, 'w+', encoding='utf-8'))
+    # f2.writerow(['编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '赏析的标签', '原文分词', '译文分词'])
     ltp = LTP(path="base")
     for i in f1:
         if len(i) == 0 or i[0] == '编号':
             continue
-        i[1], i[2], i[3] = i[1].replace(",", "，"), i[2].replace(",", "，"), i[3].replace(",", "，")
-        i[4], i[5], i[6], i[7] = i[4].replace(",", "，"), i[5].replace(",", "，"), i[6].replace(",", "，"), \
-                                 i[7].replace(",", "，")
-        token_states = Keyword_TextRank_TFIDF("", "", i[5] + i[7], ltp)
-        tags = ""
-        for token in token_states:
-            tags += (token[0] + "，")
-        # alist, nlist, tlist, vlist, slist, clist = get_TOPK_result(token_states)
-        # nlength = len(nlist)
-        # if nlength * 0.3 > 40:
-        #     kn = 40
-        # else:
-        #     kn = int(nlength * 0.3)
-        #
-        # vlength = len(vlist)
-        # if vlength * 0.3 > 40:
-        #     kv = 40
-        # else:
-        #     kv = int(vlength * 0.3)
-        #
-        # tags = ""
-        # for token in alist:
-        #     tags += (token[0] + "，")
-        # for token in nlist[:kn]:
-        #     tags += (token[0] + "，")
-        # for token in tlist:
-        #     tags += (token[0] + "，")
-        # for token in vlist[:kv]:
-        #     tags += (token[0] + "，")
-        # for token in slist:
-        #     tags += (token[0] + "，")
-        # for token in clist:
-        #     tags += (token[0] + "，")
-        i.append(tags)
-        f2.writerow(i)
+        if len(i) > 11:
+            print(len(i))
+        # i[1], i[2], i[3] = i[1].replace(",", "，"), i[2].replace(",", "，"), i[3].replace(",", "，")
+        # i[4], i[5], i[6], i[7] = i[4].replace(",", "，"), i[5].replace(",", "，"), i[6].replace(",", "，"), \
+        #                          i[7].replace(",", "，")
+        # content_token = Keyword_TextRank_TFIDF("", "", i[4], ltp)
+        # trans_token = Keyword_TextRank_TFIDF("", "", i[5], ltp)
+        # content_tags, trans_tags = "", ""
+        # for token in content_token:
+        #     content_tags += (token + "，")
+        # for token in trans_token:
+        #     trans_tags += (token + "，")
+        # i.append(content_tags)
+        # i.append(trans_tags)
+        # f2.writerow(i)
 
 
-# get_poetry_tag(t1_path, t4_path)
+# get_poetry_tag(t2_path, t5_path)
 
 
 def get_allTags(spath, tpath):      # 获取所有的tag
@@ -387,8 +368,138 @@ def calculate_csv_ltp(path):
     for i in f:
         if len(i) == 0 or i[0] == '编号':
             continue
-        if len(i) > 9:
-            print(len(i))
+        content, translation = i[4], i[5]
+        content, translation = wash_content(content), wash_content(translation)
+        # analyze_list, _ = wash_analyze(analyzes)
+        contents, translations = content.split("|"), translation.split("|")
+        # for i in range(len(translations)):
+        #     print(contents[i])
+        #     print(translations[i])
+        #     print("\n")
+        contents, translations = wash_list(contents), wash_list(translations)
+        print(len(contents))
+        print(len(translations))
+        for i in range(len(translations)):
+            print(contents[i])
+            print(translations[i])
+            print("\n")
+        print(contents[-1])
 
 
-# calculate_csv_ltp(t2_path)
+# calculate_csv_ltp(test1_path)
+
+
+def get_maxSenLength_fromPoetry(poetry_item):  # 返回最长的诗句长度
+    contents = poetry_item[4]
+    if "|" in contents:
+        maxLen = 0
+        clist = contents.split("|")
+        for c in clist:
+            if len(c) > maxLen:
+                maxLen = len(c)
+        return maxLen
+    else:
+        return len(contents)
+
+
+# '编号', '标题', '作者', '朝代', '原文', '翻译', '注释', '赏析', '赏析的标签', '原文分词', '译文分词'
+def get_sentence_file(spath, tpath):
+    fs = csv.reader(open(spath, "r", encoding="utf-8"))
+    fw = csv.writer(open(tpath, "w+", encoding="utf-8"))
+    fw.writerow(['标题', '作者', '原文句子', '译文句子', '原文分词', '译文分词'])
+    for i in fs:
+        if len(i) == 0 or i[0] == '编号':
+            continue
+        if get_maxSenLength_fromPoetry(i) >= 100:
+            continue
+        title, author = i[1], i[2]
+
+        content, translation = wash_content(i[4]), wash_content(i[5])
+        content, translation = content.strip(), translation.strip()
+        content, translation = content.replace(",", "，"), translation.replace(",", "，")
+        if content == "" or translation == "":
+            continue
+        contents, translations = content.split("|"), translation.split("|")
+        contents, translations = wash_list(contents), wash_list(translations)
+        if len(translations) == 0:  # 没有译文
+            # poetry_contents = cut_sent(content)
+            # poetry_contents = wash_list(poetry_contents)
+            # for j in range(len(poetry_contents)):
+            #     c_tags = get_tags_fromSentence(poetry_contents[j])
+            #     t_tags = ""
+            #     fw.writerow([title, author, poetry_contents[j], "", c_tags, t_tags])
+            continue
+        if len(contents) == 1:
+            poetry_contents, trans_contents = cut_sent(content), cut_sent(translation)
+            poetry_contents = wash_list(poetry_contents)
+            trans_contents = wash_list(trans_contents)
+            if len(poetry_contents) == 1:   # 分完还是只有一句
+                content, translation = content.replace("|", ""), translation.replace("|", "")
+                if content == "" or translation == "":
+                    continue
+                c_tags, t_tags = get_tags_fromSentence(content), get_tags_fromSentence(translation)
+                fw.writerow([title, author, content, translation, c_tags, t_tags])
+            elif len(poetry_contents) > 1:
+                if len(poetry_contents) == len(trans_contents):  # 分完后大于1且对齐。
+                    for j in range(len(poetry_contents)):
+                        c_tags, t_tags = get_tags_fromSentence(poetry_contents[j]), \
+                                         get_tags_fromSentence(trans_contents[j])
+                        fw.writerow([title, author, poetry_contents[j], trans_contents[j], c_tags, t_tags])
+                else:
+                    content, translation = content.replace("|", ""), translation.replace("|", "")
+                    c_tags, t_tags = get_tags_fromSentence(content), get_tags_fromSentence(translation)
+                    fw.writerow([title, author, content, translation, c_tags, t_tags])
+        elif len(contents) == len(translations):
+            for j in range(len(contents)):
+                c_tags, t_tags = get_tags_fromSentence(contents[j]), \
+                                 get_tags_fromSentence(translations[j])
+                fw.writerow([title, author, contents[j], translations[j], c_tags, t_tags])
+        else:   # 不对齐
+            poetry_contents, trans_contents = cut_sent(content), cut_sent(translation)
+            poetry_contents = wash_list(poetry_contents)
+            trans_contents = wash_list(trans_contents)
+            if len(poetry_contents) == 1 or len(poetry_contents) != len(trans_contents):
+                if len(content) <= 130:
+                    content, translation = content.replace("|", ""), translation.replace("|", "")
+                    if content == "" or translation == "":
+                        continue
+                    c_tags, t_tags = get_tags_fromSentence(content), get_tags_fromSentence(translation)
+                    fw.writerow([title, author, content, translation, c_tags, t_tags])
+                else:
+                    # for j in range(len(poetry_contents)):
+                    #     c_tags = get_tags_fromSentence(poetry_contents[j])
+                    #     fw.writerow([title, author, poetry_contents[j], "", c_tags, ""])
+                    continue
+            elif len(poetry_contents) == len(trans_contents):
+                for j in range(len(poetry_contents)):
+                    c_tags, t_tags = get_tags_fromSentence(poetry_contents[j]), \
+                                     get_tags_fromSentence(trans_contents[j])
+                    fw.writerow([title, author, poetry_contents[j], trans_contents[j], c_tags, t_tags])
+
+
+get_sentence_file(s1_path, senpath2)
+
+
+def wash_csv(spath, tpath):
+    fr = csv.reader(open(spath, "r", encoding="utf-8"))  # 编号,标题,作者,朝代,原文,翻译,注释,赏析,赏析的标签,原文分词,译文分词
+    fw = csv.writer(open(tpath, "w+", encoding="utf-8"))
+    token_list = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五']
+    for i in fr:
+        if len(i) == 0 or i[0] == '编号':
+            continue
+        trans = []
+        translations = i[5].split("|")
+        translations = wash_list(translations)
+        for sen in translations:
+            if len(sen) == 2 and sen[0] == '其' and sen[1] in token_list:
+                continue
+            if len(sen) == 3 and sen[0] == '其' and sen[1:] in token_list:
+                continue
+            trans.append(sen)
+        new_trans = '|'.join(trans)
+        i[5] = new_trans
+        fw.writerow(i)
+
+
+# wash_csv(t5_path, t6_path)
+
